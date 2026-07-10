@@ -12,10 +12,12 @@ When you run this:
 2. After 5 seconds, "Start" and "Quit" buttons appear at the bottom
    of the screen. Click one, or use the Up/Down arrow keys + Enter.
 3. Hit Start and you'll drop into the forest. Controls:
-     Arrow keys - move (Cam follows one step behind you)
+     Arrow keys - move (whoever isn't active follows one step behind)
      U          - switch which character you're controlling
      I          - attack! Mark swings his sword, Cam shoots fire
                   from his sunflower
+     D          - transform! Mark becomes a white dragon, Cam becomes
+                  a red dragon (press D again to change back)
      Esc        - quit any time
 
 Everything is drawn as chunky pixel art, built right out of colored
@@ -77,21 +79,25 @@ FACING_OFFSET = {
 }
 
 
+# ---------------- Pixel-art sprites ----------------
+# Every sprite is drawn from a small grid of letters. Each letter stands
+# for a color (see the palettes below), and '.' means "see-through".
+# mirror() builds the right half of a sprite by flipping the left half,
+# so everything comes out perfectly symmetric.
+
 def mirror(left_half):
     return left_half + left_half[::-1]
 
 
-SPRITE_PIXEL = 8
-SPRITE_COLS = 10
-SPRITE_ROWS = 14
+SPRITE_PIXEL = 8   # each grid square is drawn this many real pixels wide/tall
 
 MARK_PALETTE = {
-    "W": (245, 245, 245),
-    "S": (255, 224, 189),
-    "E": (25, 25, 25),
-    "D": (150, 120, 40),
-    "G": (212, 175, 55),
-    "B": (70, 70, 85),
+    "W": (245, 245, 245),  # white hair
+    "S": (255, 224, 189),  # skin
+    "E": (25, 25, 25),     # eyes
+    "D": (150, 120, 40),   # dark gold trim
+    "G": (212, 175, 55),   # gold armor
+    "B": (70, 70, 85),     # boots
 }
 
 MARK_SPRITE = [
@@ -112,15 +118,15 @@ MARK_SPRITE = [
 ]
 
 CAM_PALETTE = {
-    "H": (101, 67, 33),
-    "S": (255, 224, 189),
-    "E": (25, 25, 25),
-    "R": (200, 40, 40),
-    "r": (150, 25, 25),
-    "Y": (255, 214, 51),
-    "O": (200, 140, 30),
-    "P": (60, 90, 140),
-    "B": (70, 45, 25),
+    "H": (101, 67, 33),    # long brown hair
+    "S": (255, 224, 189),  # skin
+    "E": (25, 25, 25),     # eyes
+    "R": (200, 40, 40),    # red shirt
+    "r": (150, 25, 25),    # dark red trim
+    "Y": (255, 214, 51),   # sunflower petals
+    "O": (200, 140, 30),   # sunflower center
+    "P": (60, 90, 140),    # pants
+    "B": (70, 45, 25),     # boots
 }
 
 CAM_SPRITE = [
@@ -140,14 +146,46 @@ CAM_SPRITE = [
     mirror("..BB."),
 ]
 
+# One shared dragon shape - Mark's and Cam's dragon forms just recolor it.
+DRAGON_SHAPE = [
+    mirror("...HH..."),
+    mirror("..HCCH.."),
+    mirror(".CCCCCCC"),
+    mirror(".CCECCCC"),
+    mirror("..CCCCCC"),
+    mirror("...CCCCC"),
+    mirror("MM.CCCCC"),
+    mirror("MMMMCCCC"),
+    mirror(".MM.CCCC"),
+    mirror("...CCCCC"),
+    mirror("..BBBBBB"),
+    mirror("..BBBBBB"),
+    mirror("...CC..."),
+    mirror("...HH..."),
+]
+
+WHITE_DRAGON_PALETTE = {  # Mark's dragon form
+    "C": (235, 235, 240),  # white scales
+    "H": (120, 120, 130),  # horns / claws
+    "E": (220, 40, 40),    # eye
+    "M": (200, 220, 235),  # wing membrane
+    "B": (255, 250, 235),  # belly
+}
+
+RED_DRAGON_PALETTE = {  # Cam's dragon form
+    "C": (200, 40, 40),    # red scales
+    "H": (70, 35, 20),     # horns / claws
+    "E": (255, 220, 50),   # eye
+    "M": (230, 120, 40),   # wing membrane
+    "B": (255, 200, 140),  # belly
+}
+
 TREE_PIXEL = 8
-TREE_COLS = 10
-TREE_ROWS = 10
 
 TREE_PALETTE = {
-    "L": (20, 90, 40),
-    "l": (40, 120, 60),
-    "T": (90, 60, 30),
+    "L": (20, 90, 40),   # leaf
+    "l": (40, 120, 60),  # leaf highlight
+    "T": (90, 60, 30),   # trunk
 }
 
 TREE_SPRITE = [
@@ -180,8 +218,10 @@ def draw_pixel_grid(screen, grid, palette, pixel_size, origin_x, origin_y):
 
 
 def draw_character(screen, grid, palette, col, row):
-    sprite_w = SPRITE_COLS * SPRITE_PIXEL
-    sprite_h = SPRITE_ROWS * SPRITE_PIXEL
+    """Draw a character sprite anchored so its feet sit at the bottom of its tile.
+    Works for sprites of any width (dragons are wider than one tile, for wings)."""
+    sprite_w = len(grid[0]) * SPRITE_PIXEL
+    sprite_h = len(grid) * SPRITE_PIXEL
     tile_x = col * TILE_SIZE
     tile_y = row * TILE_SIZE
     origin_x = tile_x + (TILE_SIZE - sprite_w) // 2
@@ -190,6 +230,7 @@ def draw_character(screen, grid, palette, col, row):
 
 
 def draw_active_marker(screen, col, row):
+    """A little yellow diamond under whichever character you're controlling."""
     cx = col * TILE_SIZE + TILE_SIZE // 2
     cy = row * TILE_SIZE + TILE_SIZE - 6
     pygame.draw.polygon(
@@ -256,18 +297,21 @@ def main():
     intro_start_time = pygame.time.get_ticks()
 
     menu_options = ["Start", "Quit"]
-    selected_index = 0
+    selected_index = 0  # which menu option is currently highlighted
 
+    # ---- party state ----
     mark_col, mark_row = MARK_START_COL, MARK_START_ROW
     cam_col, cam_row = CAM_START_COL, CAM_START_ROW
     mark_facing = "down"
     cam_facing = "down"
-    active = "mark"
+    active = "mark"  # "mark" or "cam" - whichever one arrow keys control right now
     mark_attack_until = 0
     cam_attack_until = 0
+    dragon_mode = False  # press D to toggle - both characters transform together
 
     running = True
     while running:
+        # ---- handle events ----
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -288,6 +332,9 @@ def main():
                 elif state == STATE_OVERWORLD:
                     if event.key == pygame.K_u:
                         active = "cam" if active == "mark" else "mark"
+
+                    elif event.key == pygame.K_d:
+                        dragon_mode = not dragon_mode
 
                     elif event.key == pygame.K_i:
                         if active == "mark":
@@ -341,8 +388,10 @@ def main():
                             elif menu_options[i] == "Quit":
                                 running = False
 
+        # ---- update ----
         now = pygame.time.get_ticks()
 
+        # flash logic (used during intro, and as a subtle title flash in the menu too)
         if now - last_switch_time >= FLASH_SPEED_MS:
             color_index = (color_index + 1) % len(colors)
             last_switch_time = now
@@ -351,12 +400,14 @@ def main():
         if state == STATE_INTRO and now - intro_start_time >= INTRO_DURATION_MS:
             state = STATE_MENU
 
+        # highlight whichever menu option the mouse is hovering over
         if state == STATE_MENU:
             mouse_pos = pygame.mouse.get_pos()
             for i, rect in enumerate(menu_rects(menu_options, menu_font)):
                 if rect.collidepoint(mouse_pos):
                     selected_index = i
 
+        # ---- draw ----
         screen.fill(BACKGROUND_COLOR)
 
         if state == STATE_INTRO:
@@ -374,15 +425,19 @@ def main():
             else:
                 draw_active_marker(screen, cam_col, cam_row)
 
-            draw_character(screen, CAM_SPRITE, CAM_PALETTE, cam_col, cam_row)
-            draw_character(screen, MARK_SPRITE, MARK_PALETTE, mark_col, mark_row)
+            if dragon_mode:
+                draw_character(screen, DRAGON_SHAPE, RED_DRAGON_PALETTE, cam_col, cam_row)
+                draw_character(screen, DRAGON_SHAPE, WHITE_DRAGON_PALETTE, mark_col, mark_row)
+            else:
+                draw_character(screen, CAM_SPRITE, CAM_PALETTE, cam_col, cam_row)
+                draw_character(screen, MARK_SPRITE, MARK_PALETTE, mark_col, mark_row)
 
             if now < mark_attack_until:
                 draw_attack_effect(screen, "sword", mark_col, mark_row, mark_facing)
             if now < cam_attack_until:
                 draw_attack_effect(screen, "fire", cam_col, cam_row, cam_facing)
 
-            draw_hud(screen, hud_font, active)
+            draw_hud(screen, hud_font, active, dragon_mode)
 
         pygame.display.flip()
         clock.tick(60)
@@ -398,6 +453,8 @@ def draw_title(screen, font, color, center_y):
 
 
 def menu_rects(menu_options, font):
+    """Compute the click/hover rectangles for each menu option,
+    stacked in the bottom-middle of the screen."""
     rects = []
     bottom_margin = 60
     spacing = 55
@@ -419,7 +476,10 @@ def draw_menu(screen, font, menu_options, selected_index):
         screen.blit(text_surface, text_rect)
 
 
+# ---------------- Forest / overworld ----------------
+
 def is_walkable(col, row):
+    """A tile is walkable if it's inside the map and isn't a tree."""
     if row < 0 or row >= len(MAP_ROWS):
         return False
     if col < 0 or col >= MAP_COLS:
@@ -434,9 +494,11 @@ def draw_forest(screen):
             y = row * TILE_SIZE
             tile = MAP_ROWS[row][col]
 
+            # checkerboard the grass a little so the ground doesn't look flat
             grass = GRASS_COLOR if (row + col) % 2 == 0 else GRASS_COLOR_ALT
             pygame.draw.rect(screen, grass, (x, y, TILE_SIZE, TILE_SIZE))
 
+            # a couple of fixed little "blades" of grass for texture
             pygame.draw.rect(screen, GRASS_BLADE_COLOR, (x + 14, y + 20, 6, 6))
             pygame.draw.rect(screen, GRASS_BLADE_COLOR, (x + 50, y + 50, 6, 6))
             pygame.draw.rect(screen, GRASS_BLADE_COLOR, (x + 60, y + 16, 6, 6))
@@ -445,12 +507,14 @@ def draw_forest(screen):
                 draw_pixel_grid(screen, TREE_SPRITE, TREE_PALETTE, TREE_PIXEL, x, y)
 
 
-def draw_hud(screen, font, active):
+def draw_hud(screen, font, active, dragon_mode):
     hud_rect = pygame.Rect(0, HEIGHT - HUD_HEIGHT, WIDTH, HUD_HEIGHT)
     pygame.draw.rect(screen, BACKGROUND_COLOR, hud_rect)
     who = "Mark" if active == "mark" else "Cam"
+    if dragon_mode:
+        who += " (dragon!)"
     text = font.render(
-        f"Controlling: {who}  |  Arrows: move  |  U: switch  |  I: attack  |  Esc: quit",
+        f"Controlling: {who}  |  Arrows: move  |  U: switch  |  I: attack  |  D: transform  |  Esc: quit",
         True, WHITE,
     )
     text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT - HUD_HEIGHT // 2))
