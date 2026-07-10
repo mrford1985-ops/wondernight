@@ -7,6 +7,11 @@ armor with white hair, and his companion Cam, a boy with long brown
 hair and a red shirt with a yellow sunflower. Watch out for the 5
 Dark Knights guarding the forest!
 
+Mark, Cam, the dragons, the sword, the fire, and the tree are all
+real hand-drawn art (from the assets/ folder). The Dark Knights and
+the ground are still simple pixel art built out of colored squares,
+since we don't have drawn art for those yet.
+
 When you run this:
 1. A black window pops up and "Wondernight" flashes blue/green in the
    middle of the screen (the intro).
@@ -17,18 +22,16 @@ When you run this:
      U          - switch which character you're controlling
      I          - attack! Mark swings his sword, Cam shoots fire
                   from his sunflower
-     D          - transform! Mark becomes a white dragon, Cam becomes
+     D          - transform! Mark becomes a gold dragon, Cam becomes
                   a red dragon (press D again to change back)
      Esc        - quit any time
    Walking into a Dark Knight starts an encounter:
      I - fight it (defeats it, for now - the real battle system is
          still being built!)
      R - retreat back to the forest
-
-Everything is drawn as chunky pixel art, built right out of colored
-squares - no image files needed!
 """
 
+import os
 import pygame
 import sys
 
@@ -71,7 +74,6 @@ HUD_HEIGHT = HEIGHT - TILE_SIZE * len(MAP_ROWS)  # leftover strip at the bottom 
 
 GRASS_COLOR = (34, 120, 34)
 GRASS_COLOR_ALT = (30, 108, 30)
-GRASS_BLADE_COLOR = (24, 96, 24)
 
 MARK_START_COL, MARK_START_ROW = 5, 3
 CAM_START_COL, CAM_START_ROW = 4, 3
@@ -88,115 +90,37 @@ FACING_OFFSET = {
     "right": (1, 0),
 }
 
+ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
-# ---------------- Pixel-art sprites ----------------
-# Every sprite is drawn from a small grid of letters. Each letter stands
-# for a color (see the palettes below), and '.' means "see-through".
-# mirror() builds the right half of a sprite by flipping the left half,
-# so everything comes out perfectly symmetric.
+MARK_TARGET_H = 130
+CAM_TARGET_H = 122
+DRAGON_TARGET_W = 170
+TREE_TARGET_H = 100
+GRASS_TARGET_W = 28
+SWORD_TARGET_H = 65
+FIRE_TARGET_W = 65
+
+
+def load_scaled(filename, target_h=None, target_w=None):
+    path = os.path.join(ASSET_DIR, filename)
+    image = pygame.image.load(path).convert_alpha()
+    w, h = image.get_size()
+    scale = (target_h / h) if target_h else (target_w / w)
+    new_size = (max(1, round(w * scale)), max(1, round(h * scale)))
+    return pygame.transform.smoothscale(image, new_size)
+
 
 def mirror(left_half):
     return left_half + left_half[::-1]
 
 
-SPRITE_PIXEL = 8   # each grid square is drawn this many real pixels wide/tall
+SPRITE_PIXEL = 8
 
-MARK_PALETTE = {
-    "W": (245, 245, 245),  # white hair
-    "S": (255, 224, 189),  # skin
-    "E": (25, 25, 25),     # eyes
-    "D": (150, 120, 40),   # dark gold trim
-    "G": (212, 175, 55),   # gold armor
-    "B": (70, 70, 85),     # boots
-}
-
-MARK_SPRITE = [
-    mirror("..WWW"),
-    mirror(".WWWW"),
-    mirror("WWSSS"),
-    mirror("WSSES"),
-    mirror(".SSSS"),
-    mirror("..DGG"),
-    mirror(".DGGG"),
-    mirror(".DGGG"),
-    mirror(".DGGG"),
-    mirror(".DGGG"),
-    mirror("..DDD"),
-    mirror("..GG."),
-    mirror("..GG."),
-    mirror("..BB."),
-]
-
-CAM_PALETTE = {
-    "H": (101, 67, 33),    # long brown hair
-    "S": (255, 224, 189),  # skin
-    "E": (25, 25, 25),     # eyes
-    "R": (200, 40, 40),    # red shirt
-    "r": (150, 25, 25),    # dark red trim
-    "Y": (255, 214, 51),   # sunflower petals
-    "O": (200, 140, 30),   # sunflower center
-    "P": (60, 90, 140),    # pants
-    "B": (70, 45, 25),     # boots
-}
-
-CAM_SPRITE = [
-    mirror("..HHH"),
-    mirror(".HHHH"),
-    mirror("HHSSS"),
-    mirror("HSSES"),
-    mirror("HSSSS"),
-    mirror("HRRRR"),
-    mirror("HRRRR"),
-    mirror("RRRYY"),
-    mirror("RRYOY"),
-    mirror(".RRRR"),
-    mirror("..rrr"),
-    mirror("..PP."),
-    mirror("..PP."),
-    mirror("..BB."),
-]
-
-# One shared dragon shape - Mark's and Cam's dragon forms just recolor it.
-DRAGON_SHAPE = [
-    mirror("...HH..."),
-    mirror("..HCCH.."),
-    mirror(".CCCCCCC"),
-    mirror(".CCECCCC"),
-    mirror("..CCCCCC"),
-    mirror("...CCCCC"),
-    mirror("MM.CCCCC"),
-    mirror("MMMMCCCC"),
-    mirror(".MM.CCCC"),
-    mirror("...CCCCC"),
-    mirror("..BBBBBB"),
-    mirror("..BBBBBB"),
-    mirror("...CC..."),
-    mirror("...HH..."),
-]
-
-WHITE_DRAGON_PALETTE = {  # Mark's dragon form
-    "C": (235, 235, 240),  # white scales
-    "H": (120, 120, 130),  # horns / claws
-    "E": (220, 40, 40),    # eye
-    "M": (200, 220, 235),  # wing membrane
-    "B": (255, 250, 235),  # belly
-}
-
-RED_DRAGON_PALETTE = {  # Cam's dragon form
-    "C": (200, 40, 40),    # red scales
-    "H": (70, 35, 20),     # horns / claws
-    "E": (255, 220, 50),   # eye
-    "M": (230, 120, 40),   # wing membrane
-    "B": (255, 200, 140),  # belly
-}
-
-# Dark Knight enemy - same body layout as Mark, recolored to look sinister,
-# with a full helmet instead of a face (just two glowing red eye slits).
 DARK_KNIGHT_PALETTE = {
-    "K": (45, 45, 52),   # dark armor
-    "k": (20, 20, 24),   # darker trim / shadow
-    "R": (220, 20, 20),  # glowing red eyes
-    "H": (70, 70, 78),   # helmet spikes
+    "K": (45, 45, 52),
+    "k": (20, 20, 24),
+    "R": (220, 20, 20),
+    "H": (70, 70, 78),
 }
 
 DARK_KNIGHT_SPRITE = [
@@ -216,27 +140,6 @@ DARK_KNIGHT_SPRITE = [
     mirror("..kk."),
 ]
 
-TREE_PIXEL = 8
-
-TREE_PALETTE = {
-    "L": (20, 90, 40),   # leaf
-    "l": (40, 120, 60),  # leaf highlight
-    "T": (90, 60, 30),   # trunk
-}
-
-TREE_SPRITE = [
-    mirror("..LLL"),
-    mirror(".LLLL"),
-    mirror("LLLLL"),
-    mirror("LlLLL"),
-    mirror("LLLLL"),
-    mirror(".LLLL"),
-    mirror("..TTT"),
-    mirror("..TTT"),
-    mirror("..TTT"),
-    mirror("..TTT"),
-]
-
 
 def draw_pixel_grid(screen, grid, palette, pixel_size, origin_x, origin_y):
     for row_index, row in enumerate(grid):
@@ -253,9 +156,7 @@ def draw_pixel_grid(screen, grid, palette, pixel_size, origin_x, origin_y):
             pygame.draw.rect(screen, color, rect)
 
 
-def draw_character(screen, grid, palette, col, row):
-    """Draw a character sprite anchored so its feet sit at the bottom of its tile.
-    Works for sprites of any width (dragons are wider than one tile, for wings)."""
+def draw_pixel_character(screen, grid, palette, col, row):
     sprite_w = len(grid[0]) * SPRITE_PIXEL
     sprite_h = len(grid) * SPRITE_PIXEL
     tile_x = col * TILE_SIZE
@@ -266,7 +167,6 @@ def draw_character(screen, grid, palette, col, row):
 
 
 def draw_active_marker(screen, col, row):
-    """A little yellow diamond under whichever character you're controlling."""
     cx = col * TILE_SIZE + TILE_SIZE // 2
     cy = row * TILE_SIZE + TILE_SIZE - 6
     pygame.draw.polygon(
@@ -275,32 +175,23 @@ def draw_active_marker(screen, col, row):
     )
 
 
-def draw_attack_effect(screen, kind, col, row, facing):
+def draw_image_character(screen, surface, col, row):
+    w, h = surface.get_size()
+    tile_x = col * TILE_SIZE
+    tile_y = row * TILE_SIZE
+    x = tile_x + (TILE_SIZE - w) // 2
+    y = tile_y + TILE_SIZE - h
+    screen.blit(surface, (x, y))
+
+
+def draw_attack_effect_image(screen, images_by_facing, col, row, facing):
     d_col, d_row = FACING_OFFSET.get(facing, (0, 1))
-    base_x = (col + d_col) * TILE_SIZE
-    base_y = (row + d_row) * TILE_SIZE
-
-    if kind == "sword":
-        color = (225, 225, 235)
-        blocks = [(2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (3, 5), (5, 3)]
-        for bx, by in blocks:
-            rect = (base_x + bx * 8, base_y + by * 8, 8, 8)
-            pygame.draw.rect(screen, color, rect)
-
-    elif kind == "fire":
-        blocks = [
-            ((3, 6), (255, 90, 20)),
-            ((4, 6), (255, 140, 20)),
-            ((5, 6), (255, 90, 20)),
-            ((4, 5), (255, 170, 30)),
-            ((3, 4), (255, 200, 50)),
-            ((5, 4), (255, 200, 50)),
-            ((4, 4), (255, 230, 80)),
-            ((4, 7), (255, 90, 20)),
-        ]
-        for (bx, by), color in blocks:
-            rect = (base_x + bx * 8, base_y + by * 8, 8, 8)
-            pygame.draw.rect(screen, color, rect)
+    target_col, target_row = col + d_col, row + d_row
+    image = images_by_facing.get(facing, images_by_facing["down"])
+    w, h = image.get_size()
+    x = target_col * TILE_SIZE + (TILE_SIZE - w) // 2
+    y = target_row * TILE_SIZE + (TILE_SIZE - h) // 2
+    screen.blit(image, (x, y))
 
 
 def direction_from_delta(d_col, d_row):
@@ -326,6 +217,28 @@ def main():
     hud_font = pygame.font.SysFont("arial", 18)
     battle_font = pygame.font.SysFont("arial", 30, bold=True)
 
+    mark_image = load_scaled("mark.png", target_h=MARK_TARGET_H)
+    cam_image = load_scaled("cam.png", target_h=CAM_TARGET_H)
+    gold_dragon_image = load_scaled("gold_dragon.png", target_w=DRAGON_TARGET_W)
+    red_dragon_image = load_scaled("red_dragon.png", target_w=DRAGON_TARGET_W)
+    tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
+    grass_image = load_scaled("grass.png", target_w=GRASS_TARGET_W)
+    sword_up = load_scaled("sword.png", target_h=SWORD_TARGET_H)
+    fire_right = load_scaled("fire.png", target_w=FIRE_TARGET_W)
+
+    sword_by_facing = {
+        "up": sword_up,
+        "down": pygame.transform.rotate(sword_up, 180),
+        "left": pygame.transform.rotate(sword_up, 90),
+        "right": pygame.transform.rotate(sword_up, -90),
+    }
+    fire_by_facing = {
+        "right": fire_right,
+        "left": pygame.transform.flip(fire_right, True, False),
+        "up": pygame.transform.rotate(fire_right, 90),
+        "down": pygame.transform.rotate(fire_right, -90),
+    }
+
     colors = [BLUE, GREEN]
     color_index = 0
     last_switch_time = pygame.time.get_ticks()
@@ -334,25 +247,22 @@ def main():
     intro_start_time = pygame.time.get_ticks()
 
     menu_options = ["Start", "Quit"]
-    selected_index = 0  # which menu option is currently highlighted
+    selected_index = 0
 
-    # ---- party state ----
     mark_col, mark_row = MARK_START_COL, MARK_START_ROW
     cam_col, cam_row = CAM_START_COL, CAM_START_ROW
     mark_facing = "down"
     cam_facing = "down"
-    active = "mark"  # "mark" or "cam" - whichever one arrow keys control right now
+    active = "mark"
     mark_attack_until = 0
     cam_attack_until = 0
-    dragon_mode = False  # press D to toggle - both characters transform together
+    dragon_mode = False
 
-    # ---- enemies ----
     enemies_alive = set(ENEMY_START_POSITIONS)
-    battle_enemy_pos = None  # which enemy tile we're currently fighting, while in STATE_BATTLE
+    battle_enemy_pos = None
 
     running = True
     while running:
-        # ---- handle events ----
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -444,10 +354,8 @@ def main():
                             elif menu_options[i] == "Quit":
                                 running = False
 
-        # ---- update ----
         now = pygame.time.get_ticks()
 
-        # flash logic (used during intro, and as a subtle title flash in the menu too)
         if now - last_switch_time >= FLASH_SPEED_MS:
             color_index = (color_index + 1) % len(colors)
             last_switch_time = now
@@ -456,14 +364,12 @@ def main():
         if state == STATE_INTRO and now - intro_start_time >= INTRO_DURATION_MS:
             state = STATE_MENU
 
-        # highlight whichever menu option the mouse is hovering over
         if state == STATE_MENU:
             mouse_pos = pygame.mouse.get_pos()
             for i, rect in enumerate(menu_rects(menu_options, menu_font)):
                 if rect.collidepoint(mouse_pos):
                     selected_index = i
 
-        # ---- draw ----
         screen.fill(BACKGROUND_COLOR)
 
         if state == STATE_INTRO:
@@ -474,10 +380,10 @@ def main():
             draw_menu(screen, menu_font, menu_options, selected_index)
 
         elif state == STATE_OVERWORLD:
-            draw_forest(screen)
+            draw_forest(screen, tree_image, grass_image)
 
             for (ecol, erow) in enemies_alive:
-                draw_character(screen, DARK_KNIGHT_SPRITE, DARK_KNIGHT_PALETTE, ecol, erow)
+                draw_pixel_character(screen, DARK_KNIGHT_SPRITE, DARK_KNIGHT_PALETTE, ecol, erow)
 
             if active == "mark":
                 draw_active_marker(screen, mark_col, mark_row)
@@ -485,16 +391,16 @@ def main():
                 draw_active_marker(screen, cam_col, cam_row)
 
             if dragon_mode:
-                draw_character(screen, DRAGON_SHAPE, RED_DRAGON_PALETTE, cam_col, cam_row)
-                draw_character(screen, DRAGON_SHAPE, WHITE_DRAGON_PALETTE, mark_col, mark_row)
+                draw_image_character(screen, red_dragon_image, cam_col, cam_row)
+                draw_image_character(screen, gold_dragon_image, mark_col, mark_row)
             else:
-                draw_character(screen, CAM_SPRITE, CAM_PALETTE, cam_col, cam_row)
-                draw_character(screen, MARK_SPRITE, MARK_PALETTE, mark_col, mark_row)
+                draw_image_character(screen, cam_image, cam_col, cam_row)
+                draw_image_character(screen, mark_image, mark_col, mark_row)
 
             if now < mark_attack_until:
-                draw_attack_effect(screen, "sword", mark_col, mark_row, mark_facing)
+                draw_attack_effect_image(screen, sword_by_facing, mark_col, mark_row, mark_facing)
             if now < cam_attack_until:
-                draw_attack_effect(screen, "fire", cam_col, cam_row, cam_facing)
+                draw_attack_effect_image(screen, fire_by_facing, cam_col, cam_row, cam_facing)
 
             draw_hud(screen, hud_font, active, dragon_mode)
 
@@ -515,8 +421,6 @@ def draw_title(screen, font, color, center_y):
 
 
 def menu_rects(menu_options, font):
-    """Compute the click/hover rectangles for each menu option,
-    stacked in the bottom-middle of the screen."""
     rects = []
     bottom_margin = 60
     spacing = 55
@@ -538,10 +442,7 @@ def draw_menu(screen, font, menu_options, selected_index):
         screen.blit(text_surface, text_rect)
 
 
-# ---------------- Forest / overworld ----------------
-
 def is_walkable(col, row):
-    """A tile is walkable if it's inside the map and isn't a tree."""
     if row < 0 or row >= len(MAP_ROWS):
         return False
     if col < 0 or col >= MAP_COLS:
@@ -549,24 +450,22 @@ def is_walkable(col, row):
     return MAP_ROWS[row][col] == "."
 
 
-def draw_forest(screen):
+def draw_forest(screen, tree_image, grass_image):
     for row in range(len(MAP_ROWS)):
         for col in range(MAP_COLS):
             x = col * TILE_SIZE
             y = row * TILE_SIZE
             tile = MAP_ROWS[row][col]
 
-            # checkerboard the grass a little so the ground doesn't look flat
             grass = GRASS_COLOR if (row + col) % 2 == 0 else GRASS_COLOR_ALT
             pygame.draw.rect(screen, grass, (x, y, TILE_SIZE, TILE_SIZE))
 
-            # a couple of fixed little "blades" of grass for texture
-            pygame.draw.rect(screen, GRASS_BLADE_COLOR, (x + 14, y + 20, 6, 6))
-            pygame.draw.rect(screen, GRASS_BLADE_COLOR, (x + 50, y + 50, 6, 6))
-            pygame.draw.rect(screen, GRASS_BLADE_COLOR, (x + 60, y + 16, 6, 6))
-
             if tile == "T":
-                draw_pixel_grid(screen, TREE_SPRITE, TREE_PALETTE, TREE_PIXEL, x, y)
+                tw, th = tree_image.get_size()
+                screen.blit(tree_image, (x + (TILE_SIZE - tw) // 2, y + TILE_SIZE - th))
+            else:
+                gw, gh = grass_image.get_size()
+                screen.blit(grass_image, (x + (TILE_SIZE - gw) // 2, y + TILE_SIZE - gh))
 
 
 def draw_hud(screen, font, active, dragon_mode):
@@ -582,8 +481,6 @@ def draw_hud(screen, font, active, dragon_mode):
     text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT - HUD_HEIGHT // 2))
     screen.blit(text, text_rect)
 
-
-# ---------------- Battle screen (placeholder for now) ----------------
 
 def draw_battle_screen(screen, big_font, small_font):
     screen.fill(BACKGROUND_COLOR)
