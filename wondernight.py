@@ -7,10 +7,9 @@ armor with white hair, and his companion Cam, a boy with long brown
 hair and a red shirt with a yellow sunflower. Watch out for the 5
 Dark Knights guarding the forest!
 
-Mark, Cam, the dragons, the sword, the fire, and the tree are all
-real hand-drawn art (from the assets/ folder). The Dark Knights and
-the ground are still simple pixel art built out of colored squares,
-since we don't have drawn art for those yet.
+Mark, Cam, the Dark Knight, the dragons, the sword, the fire, and the
+tree are all real hand-drawn art (from the assets/ folder). Only the
+ground tiles are still simple flat colors.
 
 When you run this:
 1. A black window pops up and "Wondernight" flashes blue/green in the
@@ -109,13 +108,15 @@ ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 # How big each drawn-art image should appear on screen (pygame scales the
 # original art to fit these sizes, keeping its proportions).
 MARK_TARGET_H = 130
-CAM_TARGET_H = 122
+CAM_TARGET_H = 118
+DARK_KNIGHT_TARGET_H = 130
 DRAGON_TARGET_W = 170
 TREE_TARGET_H = 100
 GRASS_TARGET_W = 28  # small ground texture tuft, scattered one per grass tile
 SWORD_TARGET_H = 65
 FIRE_TARGET_W = 65
-BATTLE_PORTRAIT_H = 150  # bigger version of Mark/Cam for the battle screen
+BATTLE_PORTRAIT_H = 140       # bigger version of Mark/Cam for the battle screen
+DARK_KNIGHT_BATTLE_H = 170    # bigger version of the Dark Knight for the battle screen
 
 
 def load_scaled(filename, target_h=None, target_w=None):
@@ -127,69 +128,6 @@ def load_scaled(filename, target_h=None, target_w=None):
     scale = (target_h / h) if target_h else (target_w / w)
     new_size = (max(1, round(w * scale)), max(1, round(h * scale)))
     return pygame.transform.smoothscale(image, new_size)
-
-
-# ---------------- Dark Knight enemy (still pixel art - no drawn art for this yet) ----------------
-# Every pixel-art sprite here is drawn from a small grid of letters. Each
-# letter stands for a color, and '.' means "see-through". mirror() builds
-# the right half of a sprite by flipping the left half, so it comes out
-# perfectly symmetric.
-
-def mirror(left_half):
-    return left_half + left_half[::-1]
-
-
-SPRITE_PIXEL = 8
-
-DARK_KNIGHT_PALETTE = {
-    "K": (45, 45, 52),   # dark armor
-    "k": (20, 20, 24),   # darker trim / shadow
-    "R": (220, 20, 20),  # glowing red eyes
-    "H": (70, 70, 78),   # helmet spikes
-}
-
-DARK_KNIGHT_SPRITE = [
-    mirror("..HHH"),
-    mirror(".KKKK"),
-    mirror("KKKKK"),
-    mirror("KKRKK"),
-    mirror(".KKKK"),
-    mirror("..kKK"),
-    mirror(".kKKK"),
-    mirror(".kKKK"),
-    mirror(".kKKK"),
-    mirror(".kKKK"),
-    mirror("..kkk"),
-    mirror("..KK."),
-    mirror("..KK."),
-    mirror("..kk."),
-]
-
-
-def draw_pixel_grid(screen, grid, palette, pixel_size, origin_x, origin_y):
-    for row_index, row in enumerate(grid):
-        for col_index, ch in enumerate(row):
-            if ch == ".":
-                continue
-            color = palette[ch]
-            rect = (
-                origin_x + col_index * pixel_size,
-                origin_y + row_index * pixel_size,
-                pixel_size,
-                pixel_size,
-            )
-            pygame.draw.rect(screen, color, rect)
-
-
-def draw_pixel_character(screen, grid, palette, col, row):
-    """Draw a pixel-art sprite anchored so its feet sit at the bottom of its tile."""
-    sprite_w = len(grid[0]) * SPRITE_PIXEL
-    sprite_h = len(grid) * SPRITE_PIXEL
-    tile_x = col * TILE_SIZE
-    tile_y = row * TILE_SIZE
-    origin_x = tile_x + (TILE_SIZE - sprite_w) // 2
-    origin_y = tile_y + TILE_SIZE - sprite_h
-    draw_pixel_grid(screen, grid, palette, SPRITE_PIXEL, origin_x, origin_y)
 
 
 def draw_active_marker(screen, col, row):
@@ -250,6 +188,7 @@ def main():
     # ---- load the real art (drawn assets) ----
     mark_image = load_scaled("mark.png", target_h=MARK_TARGET_H)
     cam_image = load_scaled("cam.png", target_h=CAM_TARGET_H)
+    dark_knight_image = load_scaled("dark_knight.png", target_h=DARK_KNIGHT_TARGET_H)
     gold_dragon_image = load_scaled("gold_dragon.png", target_w=DRAGON_TARGET_W)
     red_dragon_image = load_scaled("red_dragon.png", target_w=DRAGON_TARGET_W)
     tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
@@ -258,6 +197,7 @@ def main():
     fire_right = load_scaled("fire.png", target_w=FIRE_TARGET_W)
     mark_portrait = load_scaled("mark.png", target_h=BATTLE_PORTRAIT_H)
     cam_portrait = load_scaled("cam.png", target_h=BATTLE_PORTRAIT_H)
+    dark_knight_portrait = load_scaled("dark_knight.png", target_h=DARK_KNIGHT_BATTLE_H)
 
     # pre-rotate/flip the attack effects for each direction, once, up front
     sword_by_facing = {
@@ -493,7 +433,7 @@ def main():
             draw_forest(screen, tree_image, grass_image)
 
             for (ecol, erow) in enemies_alive:
-                draw_pixel_character(screen, DARK_KNIGHT_SPRITE, DARK_KNIGHT_PALETTE, ecol, erow)
+                draw_image_character(screen, dark_knight_image, ecol, erow)
 
             if active == "mark":
                 draw_active_marker(screen, mark_col, mark_row)
@@ -523,7 +463,7 @@ def main():
             draw_battle_screen(
                 screen, battle_font, battle_small_font,
                 fighter_image, fighter_name, fighter_hp, fighter_max_hp,
-                battle_enemy_hp, battle_phase, battle_selected, battle_log,
+                dark_knight_portrait, battle_enemy_hp, battle_phase, battle_selected, battle_log,
             )
 
         pygame.display.flip()
@@ -628,42 +568,39 @@ def draw_hp_bar(screen, x, y, width, height, current, maximum, fill_color):
 def draw_battle_screen(
     screen, big_font, small_font,
     fighter_image, fighter_name, fighter_hp, fighter_max_hp,
-    enemy_hp, battle_phase, battle_selected, battle_log,
+    dark_knight_portrait, enemy_hp, battle_phase, battle_selected, battle_log,
 ):
     screen.fill(BACKGROUND_COLOR)
 
     # ---- Dark Knight (top) ----
     label = big_font.render("Dark Knight", True, DANGER_RED)
-    screen.blit(label, label.get_rect(center=(WIDTH // 2, 36)))
+    screen.blit(label, label.get_rect(center=(WIDTH // 2, 30)))
 
-    bar_w, bar_h = 260, 20
-    draw_hp_bar(screen, WIDTH // 2 - bar_w // 2, 56, bar_w, bar_h, enemy_hp, ENEMY_MAX_HP, HP_RED)
+    bar_w, bar_h = 260, 18
+    draw_hp_bar(screen, WIDTH // 2 - bar_w // 2, 50, bar_w, bar_h, enemy_hp, ENEMY_MAX_HP, HP_RED)
     hp_text = small_font.render(f"{max(0, enemy_hp)}/{ENEMY_MAX_HP}", True, WHITE)
-    screen.blit(hp_text, hp_text.get_rect(center=(WIDTH // 2, 56 + bar_h // 2)))
+    screen.blit(hp_text, hp_text.get_rect(center=(WIDTH // 2, 50 + bar_h // 2)))
 
-    scale = 10
-    sprite_w = len(DARK_KNIGHT_SPRITE[0]) * scale
-    sprite_h = len(DARK_KNIGHT_SPRITE) * scale
-    origin_x = (WIDTH - sprite_w) // 2
-    origin_y = 90
-    draw_pixel_grid(screen, DARK_KNIGHT_SPRITE, DARK_KNIGHT_PALETTE, scale, origin_x, origin_y)
+    kw, kh = dark_knight_portrait.get_size()
+    knight_y = 76
+    screen.blit(dark_knight_portrait, (WIDTH // 2 - kw // 2, knight_y))
 
     # ---- fighter (bottom) ----
-    fighter_y = origin_y + sprite_h + 30
+    fighter_y = knight_y + kh + 14
     fw, fh = fighter_image.get_size()
     screen.blit(fighter_image, (WIDTH // 2 - fw // 2, fighter_y))
 
     name_label = big_font.render(fighter_name, True, (120, 200, 255))
-    screen.blit(name_label, name_label.get_rect(center=(WIDTH // 2, fighter_y + fh + 20)))
+    screen.blit(name_label, name_label.get_rect(center=(WIDTH // 2, fighter_y + fh + 16)))
 
     draw_hp_bar(
-        screen, WIDTH // 2 - bar_w // 2, fighter_y + fh + 42, bar_w, bar_h,
+        screen, WIDTH // 2 - bar_w // 2, fighter_y + fh + 36, bar_w, bar_h,
         fighter_hp, fighter_max_hp, HP_GREEN,
     )
     fighter_hp_text = small_font.render(f"{max(0, fighter_hp)}/{fighter_max_hp}", True, WHITE)
     screen.blit(
         fighter_hp_text,
-        fighter_hp_text.get_rect(center=(WIDTH // 2, fighter_y + fh + 42 + bar_h // 2)),
+        fighter_hp_text.get_rect(center=(WIDTH // 2, fighter_y + fh + 36 + bar_h // 2)),
     )
 
     # ---- battle log ----
