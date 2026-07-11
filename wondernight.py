@@ -2,10 +2,15 @@
 Wondernight
 My first video game!
 
-A turn-based RPG set in a forest, starring Mark, a knight in golden
-armor with white hair, and his companion Cam, a boy with long brown
-hair and a red shirt with a yellow sunflower. Watch out for the 5
-Dark Knights guarding the forest!
+A race through a big forest, starring Mark, a knight in golden armor
+with white hair, and his companion Cam, a boy with long brown hair and
+a red shirt with a yellow sunflower. Ten Dark Knights roam the forest,
+each one wandering to a new spot every 2 seconds.
+
+Mark and Cam take turns trying to run from the START at the top of the
+map to the FINISH at the bottom. Bump into a Dark Knight and you'll
+have to fight it. Run out of health before you finish, and your turn
+ends - you'll start over from the top next time it's your go.
 
 Mark, Cam, the Dark Knight, the dragons, the sword, the fire, and the
 tree are all real hand-drawn art (from the assets/ folder). Only the
@@ -16,19 +21,21 @@ When you run this:
    middle of the screen (the intro).
 2. After 5 seconds, "Start" and "Quit" buttons appear at the bottom
    of the screen. Click one, or use the Up/Down arrow keys + Enter.
-3. Hit Start and you'll drop into the forest. Controls:
-     Arrow keys - move whoever you're controlling (the other
-                  character just waits where they are)
-     U          - switch which character you're controlling
+3. Hit Start and Mark takes the first turn at the top of the forest.
+   Controls:
+     Arrow keys - move
      I          - swing! Mark swings his sword, Cam shoots fire
-                  from his sunflower (just for show in the overworld)
+                  from his sunflower (just for show)
      D          - transform! Mark becomes a gold dragon, Cam becomes
                   a red dragon (press D again to change back)
      Esc        - quit any time
-   Walking into a Dark Knight starts a real battle:
+   Walking into a Dark Knight (or one wandering into you) starts a
+   real battle:
      Up/Down - choose Attack or Run
      Enter   - confirm
-   Defeat all 5 Dark Knights and they respawn 30 seconds later.
+   Reach the finish and it becomes the other character's turn. Run
+   out of health and it also becomes the other character's turn -
+   you'll restart from the top next time.
 """
 
 import os
@@ -60,30 +67,47 @@ STATE_INTRO = "intro"
 STATE_MENU = "menu"
 STATE_OVERWORLD = "overworld"
 STATE_BATTLE = "battle"
+STATE_FINISH = "finish"
 
-# ---- Forest map ----
+# ---- Forest map (20 x 14 - double the size of the original) ----
 # 'T' = tree (blocked), '.' = grass (walkable)
 TILE_SIZE = 80
+HUD_HEIGHT = 40
+VIEWPORT_WIDTH = WIDTH
+VIEWPORT_HEIGHT = HEIGHT - HUD_HEIGHT
+
 MAP_ROWS = [
-    "TTTTTTTTTT",
-    "T........T",
-    "T.TT..T..T",
-    "T........T",
-    "T..T..TT.T",
-    "T........T",
-    "TTTTTTTTTT",
+    "TTTTTTTTTTTTTTTTTTTT",
+    "T..................T",
+    "T........T.........T",
+    "TT....T...........TT",
+    "T...T..............T",
+    "T....T.............T",
+    "T........T......T..T",
+    "T..TT.T....T......TT",
+    "TT..T...T.T......TTT",
+    "T......T..T......T.T",
+    "T........T..T......T",
+    "T.......T..........T",
+    "T..T..T............T",
+    "TTTTTTTTTTTTTTTTTTTT",
 ]
 MAP_COLS = len(MAP_ROWS[0])
-HUD_HEIGHT = HEIGHT - TILE_SIZE * len(MAP_ROWS)  # leftover strip at the bottom for text
+MAP_ROW_COUNT = len(MAP_ROWS)
+MAP_PIXEL_WIDTH = MAP_COLS * TILE_SIZE
+MAP_PIXEL_HEIGHT = MAP_ROW_COUNT * TILE_SIZE
 
 GRASS_COLOR = (34, 120, 34)
 GRASS_COLOR_ALT = (30, 108, 30)
+START_COLOR = (70, 190, 90)
+FINISH_COLOR = (210, 180, 60)
 
-MARK_START_COL, MARK_START_ROW = 5, 3
-CAM_START_COL, CAM_START_ROW = 4, 3
+# Everyone's turn begins here, and the goal is to reach FINISH
+START_COL, START_ROW = 10, 1
+FINISH_COL, FINISH_ROW = 10, 12
 
-# (col, row) for each of the 5 Dark Knights guarding the forest
-ENEMY_START_POSITIONS = [(2, 1), (7, 1), (7, 3), (2, 5), (5, 5)]
+ENEMY_COUNT = 10
+ENEMY_MOVE_INTERVAL_MS = 2000
 RESPAWN_DELAY_MS = 30000  # 30 seconds after the last one falls, they all come back
 
 ATTACK_DURATION_MS = 350
@@ -130,35 +154,13 @@ def load_scaled(filename, target_h=None, target_w=None):
     return pygame.transform.smoothscale(image, new_size)
 
 
-def draw_active_marker(screen, col, row):
-    """A little yellow diamond under whichever character you're controlling."""
-    cx = col * TILE_SIZE + TILE_SIZE // 2
-    cy = row * TILE_SIZE + TILE_SIZE - 6
-    pygame.draw.polygon(
-        screen, YELLOW,
-        [(cx, cy - 5), (cx + 6, cy), (cx, cy + 5), (cx - 6, cy)],
-    )
-
-
-def draw_image_character(screen, surface, col, row):
-    """Draw a real-art sprite anchored so its feet sit at the bottom of its tile."""
-    w, h = surface.get_size()
-    tile_x = col * TILE_SIZE
-    tile_y = row * TILE_SIZE
-    x = tile_x + (TILE_SIZE - w) // 2
-    y = tile_y + TILE_SIZE - h
-    screen.blit(surface, (x, y))
-
-
-def draw_attack_effect_image(screen, images_by_facing, col, row, facing):
-    """Draw a real-art attack effect centered in the tile the character is facing."""
-    d_col, d_row = FACING_OFFSET.get(facing, (0, 1))
-    target_col, target_row = col + d_col, row + d_row
-    image = images_by_facing.get(facing, images_by_facing["down"])
-    w, h = image.get_size()
-    x = target_col * TILE_SIZE + (TILE_SIZE - w) // 2
-    y = target_row * TILE_SIZE + (TILE_SIZE - h) // 2
-    screen.blit(image, (x, y))
+def is_walkable(col, row):
+    """A tile is walkable if it's inside the map and isn't a tree."""
+    if row < 0 or row >= MAP_ROW_COUNT:
+        return False
+    if col < 0 or col >= MAP_COLS:
+        return False
+    return MAP_ROWS[row][col] == "."
 
 
 def direction_from_delta(d_col, d_row):
@@ -173,6 +175,122 @@ def direction_from_delta(d_col, d_row):
     return "down"
 
 
+def compute_camera(col, row):
+    """Center the camera on a tile, clamped so it never shows past the map edge."""
+    px_x = col * TILE_SIZE + TILE_SIZE // 2
+    px_y = row * TILE_SIZE + TILE_SIZE // 2
+    cam_x = px_x - VIEWPORT_WIDTH // 2
+    cam_y = px_y - VIEWPORT_HEIGHT // 2
+    cam_x = max(0, min(cam_x, MAP_PIXEL_WIDTH - VIEWPORT_WIDTH))
+    cam_y = max(0, min(cam_y, MAP_PIXEL_HEIGHT - VIEWPORT_HEIGHT))
+    return cam_x, cam_y
+
+
+def random_enemy_positions(count):
+    """Pick random walkable tiles for the Dark Knights, well clear of the start line."""
+    no_spawn = {(START_COL, START_ROW), (FINISH_COL, FINISH_ROW)}
+    for d_col, d_row in FACING_OFFSET.values():
+        no_spawn.add((START_COL + d_col, START_ROW + d_row))
+
+    open_tiles = [
+        (col, row)
+        for row in range(MAP_ROW_COUNT)
+        for col in range(MAP_COLS)
+        if MAP_ROWS[row][col] == "." and (col, row) not in no_spawn
+    ]
+    random.shuffle(open_tiles)
+    chosen = open_tiles[:count]
+    return [{"col": col, "row": row} for col, row in chosen]
+
+
+def move_enemies(enemies):
+    """Every Dark Knight wanders to a random adjacent open tile, if one is free."""
+    occupied = {(e["col"], e["row"]) for e in enemies}
+    for enemy in enemies:
+        here = (enemy["col"], enemy["row"])
+        options = []
+        for d_col, d_row in FACING_OFFSET.values():
+            candidate = (enemy["col"] + d_col, enemy["row"] + d_row)
+            if is_walkable(*candidate) and candidate not in occupied:
+                options.append(candidate)
+        if options:
+            new_col, new_row = random.choice(options)
+            occupied.discard(here)
+            enemy["col"], enemy["row"] = new_col, new_row
+            occupied.add((new_col, new_row))
+
+
+def draw_active_marker(screen, col, row, cam_x, cam_y):
+    """A little yellow diamond under whichever character is taking their turn."""
+    cx = col * TILE_SIZE - cam_x + TILE_SIZE // 2
+    cy = row * TILE_SIZE - cam_y + TILE_SIZE - 6
+    pygame.draw.polygon(
+        screen, YELLOW,
+        [(cx, cy - 5), (cx + 6, cy), (cx, cy + 5), (cx - 6, cy)],
+    )
+
+
+def draw_image_character(screen, surface, col, row, cam_x, cam_y):
+    """Draw a real-art sprite anchored so its feet sit at the bottom of its tile."""
+    w, h = surface.get_size()
+    tile_x = col * TILE_SIZE - cam_x
+    tile_y = row * TILE_SIZE - cam_y
+    x = tile_x + (TILE_SIZE - w) // 2
+    y = tile_y + TILE_SIZE - h
+    screen.blit(surface, (x, y))
+
+
+def draw_attack_effect_image(screen, images_by_facing, col, row, facing, cam_x, cam_y):
+    """Draw a real-art attack effect centered in the tile the character is facing."""
+    d_col, d_row = FACING_OFFSET.get(facing, (0, 1))
+    target_col, target_row = col + d_col, row + d_row
+    image = images_by_facing.get(facing, images_by_facing["down"])
+    w, h = image.get_size()
+    x = target_col * TILE_SIZE - cam_x + (TILE_SIZE - w) // 2
+    y = target_row * TILE_SIZE - cam_y + (TILE_SIZE - h) // 2
+    screen.blit(image, (x, y))
+
+
+def draw_marker_tile(screen, x, y, color, letter, flag_color, font):
+    pygame.draw.rect(screen, color, (x, y, TILE_SIZE, TILE_SIZE))
+    pole_x = x + TILE_SIZE // 2 - 2
+    pygame.draw.rect(screen, (90, 60, 30), (pole_x, y + 8, 4, TILE_SIZE - 16))
+    flag_points = [(pole_x + 4, y + 10), (pole_x + 30, y + 20), (pole_x + 4, y + 30)]
+    pygame.draw.polygon(screen, flag_color, flag_points)
+    letter_surface = font.render(letter, True, (20, 20, 20))
+    screen.blit(letter_surface, letter_surface.get_rect(center=(pole_x + 14, y + 20)))
+
+
+def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y):
+    col_start = max(0, cam_x // TILE_SIZE)
+    col_end = min(MAP_COLS, (cam_x + VIEWPORT_WIDTH) // TILE_SIZE + 2)
+    row_start = max(0, cam_y // TILE_SIZE)
+    row_end = min(MAP_ROW_COUNT, (cam_y + VIEWPORT_HEIGHT) // TILE_SIZE + 2)
+
+    for row in range(row_start, row_end):
+        for col in range(col_start, col_end):
+            x = col * TILE_SIZE - cam_x
+            y = row * TILE_SIZE - cam_y
+            tile = MAP_ROWS[row][col]
+
+            if (col, row) == (START_COL, START_ROW):
+                draw_marker_tile(screen, x, y, START_COLOR, "S", WHITE, marker_font)
+                continue
+            if (col, row) == (FINISH_COL, FINISH_ROW):
+                draw_marker_tile(screen, x, y, FINISH_COLOR, "F", DANGER_RED, marker_font)
+                continue
+
+            grass = GRASS_COLOR if (row + col) % 2 == 0 else GRASS_COLOR_ALT
+            pygame.draw.rect(screen, grass, (x, y, TILE_SIZE, TILE_SIZE))
+
+            if tile == "T":
+                tw, th = tree_image.get_size()
+                screen.blit(tree_image, (x + (TILE_SIZE - tw) // 2, y + TILE_SIZE - th))
+            else:
+                gw, gh = grass_image.get_size()
+                screen.blit(grass_image, (x + (TILE_SIZE - gw) // 2, y + TILE_SIZE - gh))
+
+
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -181,9 +299,10 @@ def main():
 
     title_font = pygame.font.SysFont("arial", TITLE_FONT_SIZE, bold=True)
     menu_font = pygame.font.SysFont("arial", MENU_FONT_SIZE, bold=True)
-    hud_font = pygame.font.SysFont("arial", 18)
+    hud_font = pygame.font.SysFont("arial", 16)
     battle_font = pygame.font.SysFont("arial", 28, bold=True)
     battle_small_font = pygame.font.SysFont("arial", 18)
+    marker_font = pygame.font.SysFont("arial", 22, bold=True)
 
     # ---- load the real art (drawn assets) ----
     mark_image = load_scaled("mark.png", target_h=MARK_TARGET_H)
@@ -223,30 +342,42 @@ def main():
     menu_options = ["Start", "Quit"]
     selected_index = 0  # which menu option is currently highlighted
 
-    # ---- party state ----
-    mark_col, mark_row = MARK_START_COL, MARK_START_ROW
-    cam_col, cam_row = CAM_START_COL, CAM_START_ROW
+    # ---- turn-based race state ----
+    active = "mark"  # whoever's turn it is: "mark" or "cam"
+    mark_col, mark_row = START_COL, START_ROW
+    cam_col, cam_row = START_COL, START_ROW
     mark_facing = "down"
     cam_facing = "down"
-    active = "mark"  # "mark" or "cam" - whichever one arrow keys control right now
-    mark_attack_until = 0
-    cam_attack_until = 0
-    dragon_mode = False  # press D to toggle - both characters transform together
-
     mark_hp = MARK_MAX_HP
     cam_hp = CAM_MAX_HP
+    wins = {"mark": 0, "cam": 0}
+
+    mark_attack_until = 0
+    cam_attack_until = 0
+    dragon_mode = False  # press D to toggle - just for looks
 
     # ---- enemies ----
-    enemies_alive = set(ENEMY_START_POSITIONS)
+    enemies = random_enemy_positions(ENEMY_COUNT)
+    last_enemy_move_time = pygame.time.get_ticks()
     all_defeated_at = None  # timestamp when the last Dark Knight fell, or None
 
     # ---- battle state (only meaningful while state == STATE_BATTLE) ----
-    battle_enemy_pos = None
+    battle_enemy_ref = None     # the actual enemy dict currently being fought
     battle_fighter = "mark"     # who's fighting: "mark" or "cam"
     battle_enemy_hp = ENEMY_MAX_HP
     battle_phase = "choose"     # "choose", "victory", or "defeat"
     battle_selected = 0
     battle_log = []
+
+    def start_turn_for(character):
+        """Send a character back to the start line, fully healed, for a fresh turn."""
+        nonlocal mark_col, mark_row, cam_col, cam_row, mark_hp, cam_hp
+        if character == "mark":
+            mark_col, mark_row = START_COL, START_ROW
+            mark_hp = MARK_MAX_HP
+        else:
+            cam_col, cam_row = START_COL, START_ROW
+            cam_hp = CAM_MAX_HP
 
     running = True
     while running:
@@ -269,10 +400,7 @@ def main():
                             running = False
 
                 elif state == STATE_OVERWORLD:
-                    if event.key == pygame.K_u:
-                        active = "cam" if active == "mark" else "mark"
-
-                    elif event.key == pygame.K_d:
+                    if event.key == pygame.K_d:
                         dragon_mode = not dragon_mode
 
                     elif event.key == pygame.K_i:
@@ -294,35 +422,39 @@ def main():
 
                         if d_col or d_row:
                             new_direction = direction_from_delta(d_col, d_row)
+                            cur_col = mark_col if active == "mark" else cam_col
+                            cur_row = mark_row if active == "mark" else cam_row
 
-                            # Only the character you're controlling moves -
-                            # the other one just waits wherever it is.
                             if active == "mark":
                                 mark_facing = new_direction
-                                new_col, new_row = mark_col + d_col, mark_row + d_row
-                                if (new_col, new_row) in enemies_alive:
-                                    state = STATE_BATTLE
-                                    battle_enemy_pos = (new_col, new_row)
-                                    battle_fighter = "mark"
-                                    battle_enemy_hp = ENEMY_MAX_HP
-                                    battle_phase = "choose"
-                                    battle_selected = 0
-                                    battle_log = []
-                                elif is_walkable(new_col, new_row):
-                                    mark_col, mark_row = new_col, new_row
                             else:
                                 cam_facing = new_direction
-                                new_col, new_row = cam_col + d_col, cam_row + d_row
-                                if (new_col, new_row) in enemies_alive:
-                                    state = STATE_BATTLE
-                                    battle_enemy_pos = (new_col, new_row)
-                                    battle_fighter = "cam"
-                                    battle_enemy_hp = ENEMY_MAX_HP
-                                    battle_phase = "choose"
-                                    battle_selected = 0
-                                    battle_log = []
-                                elif is_walkable(new_col, new_row):
+
+                            new_col, new_row = cur_col + d_col, cur_row + d_row
+
+                            enemy_here = next(
+                                (e for e in enemies if (e["col"], e["row"]) == (new_col, new_row)),
+                                None,
+                            )
+
+                            if enemy_here is not None:
+                                state = STATE_BATTLE
+                                battle_enemy_ref = enemy_here
+                                battle_fighter = active
+                                battle_enemy_hp = ENEMY_MAX_HP
+                                battle_phase = "choose"
+                                battle_selected = 0
+                                battle_log = []
+
+                            elif is_walkable(new_col, new_row):
+                                if active == "mark":
+                                    mark_col, mark_row = new_col, new_row
+                                else:
                                     cam_col, cam_row = new_col, new_row
+
+                                if (new_col, new_row) == (FINISH_COL, FINISH_ROW):
+                                    wins[active] += 1
+                                    state = STATE_FINISH
 
                 elif state == STATE_BATTLE:
                     if battle_phase == "choose":
@@ -334,7 +466,7 @@ def main():
 
                             if choice == "Run":
                                 state = STATE_OVERWORLD
-                                battle_enemy_pos = None
+                                battle_enemy_ref = None
 
                             elif choice == "Attack":
                                 fighter_name = "Mark" if battle_fighter == "mark" else "Cam"
@@ -361,20 +493,24 @@ def main():
 
                     elif battle_phase == "victory":
                         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                            enemies_alive.discard(battle_enemy_pos)
-                            battle_enemy_pos = None
+                            if battle_enemy_ref in enemies:
+                                enemies.remove(battle_enemy_ref)
+                            battle_enemy_ref = None
                             state = STATE_OVERWORLD
 
                     elif battle_phase == "defeat":
                         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                            if battle_fighter == "mark":
-                                mark_hp = MARK_MAX_HP
-                            else:
-                                cam_hp = CAM_MAX_HP
-                            mark_col, mark_row = MARK_START_COL, MARK_START_ROW
-                            cam_col, cam_row = CAM_START_COL, CAM_START_ROW
-                            battle_enemy_pos = None
+                            # this character's turn is over - pass it to the other one
+                            active = "cam" if active == "mark" else "mark"
+                            start_turn_for(active)
+                            battle_enemy_ref = None
                             state = STATE_OVERWORLD
+
+                elif state == STATE_FINISH:
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        active = "cam" if active == "mark" else "mark"
+                        start_turn_for(active)
+                        state = STATE_OVERWORLD
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if state == STATE_MENU:
@@ -406,13 +542,34 @@ def main():
                 if rect.collidepoint(mouse_pos):
                     selected_index = i
 
-        # once every Dark Knight has fallen, start the respawn clock;
-        # 30 seconds later, bring them all back
-        if not enemies_alive and all_defeated_at is None:
-            all_defeated_at = now
-        if all_defeated_at is not None and now - all_defeated_at >= RESPAWN_DELAY_MS:
-            enemies_alive = set(ENEMY_START_POSITIONS)
-            all_defeated_at = None
+        if state == STATE_OVERWORLD:
+            # every Dark Knight wanders to a new tile every couple of seconds
+            if now - last_enemy_move_time >= ENEMY_MOVE_INTERVAL_MS:
+                last_enemy_move_time = now
+                move_enemies(enemies)
+
+                active_col = mark_col if active == "mark" else cam_col
+                active_row = mark_row if active == "mark" else cam_row
+                ambusher = next(
+                    (e for e in enemies if (e["col"], e["row"]) == (active_col, active_row)),
+                    None,
+                )
+                if ambusher is not None:
+                    state = STATE_BATTLE
+                    battle_enemy_ref = ambusher
+                    battle_fighter = active
+                    battle_enemy_hp = ENEMY_MAX_HP
+                    battle_phase = "choose"
+                    battle_selected = 0
+                    battle_log = ["The Dark Knight ambushes you!"]
+
+            # once every Dark Knight has fallen, start the respawn clock;
+            # 30 seconds later, bring them all back at new random spots
+            if not enemies and all_defeated_at is None:
+                all_defeated_at = now
+            if all_defeated_at is not None and now - all_defeated_at >= RESPAWN_DELAY_MS:
+                enemies = random_enemy_positions(ENEMY_COUNT)
+                all_defeated_at = None
 
         respawn_seconds = None
         if all_defeated_at is not None:
@@ -430,29 +587,31 @@ def main():
             draw_menu(screen, menu_font, menu_options, selected_index)
 
         elif state == STATE_OVERWORLD:
-            draw_forest(screen, tree_image, grass_image)
+            active_col = mark_col if active == "mark" else cam_col
+            active_row = mark_row if active == "mark" else cam_row
+            active_facing = mark_facing if active == "mark" else cam_facing
+            cam_x, cam_y = compute_camera(active_col, active_row)
 
-            for (ecol, erow) in enemies_alive:
-                draw_image_character(screen, dark_knight_image, ecol, erow)
+            draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y)
 
-            if active == "mark":
-                draw_active_marker(screen, mark_col, mark_row)
-            else:
-                draw_active_marker(screen, cam_col, cam_row)
+            for enemy in enemies:
+                draw_image_character(screen, dark_knight_image, enemy["col"], enemy["row"], cam_x, cam_y)
+
+            draw_active_marker(screen, active_col, active_row, cam_x, cam_y)
 
             if dragon_mode:
-                draw_image_character(screen, red_dragon_image, cam_col, cam_row)
-                draw_image_character(screen, gold_dragon_image, mark_col, mark_row)
+                dragon_image = gold_dragon_image if active == "mark" else red_dragon_image
+                draw_image_character(screen, dragon_image, active_col, active_row, cam_x, cam_y)
             else:
-                draw_image_character(screen, cam_image, cam_col, cam_row)
-                draw_image_character(screen, mark_image, mark_col, mark_row)
+                char_image = mark_image if active == "mark" else cam_image
+                draw_image_character(screen, char_image, active_col, active_row, cam_x, cam_y)
 
-            if now < mark_attack_until:
-                draw_attack_effect_image(screen, sword_by_facing, mark_col, mark_row, mark_facing)
-            if now < cam_attack_until:
-                draw_attack_effect_image(screen, fire_by_facing, cam_col, cam_row, cam_facing)
+            attack_until = mark_attack_until if active == "mark" else cam_attack_until
+            if now < attack_until:
+                effect = sword_by_facing if active == "mark" else fire_by_facing
+                draw_attack_effect_image(screen, effect, active_col, active_row, active_facing, cam_x, cam_y)
 
-            draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds)
+            draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds, wins)
 
         elif state == STATE_BATTLE:
             fighter_image = mark_portrait if battle_fighter == "mark" else cam_portrait
@@ -465,6 +624,11 @@ def main():
                 fighter_image, fighter_name, fighter_hp, fighter_max_hp,
                 dark_knight_portrait, battle_enemy_hp, battle_phase, battle_selected, battle_log,
             )
+
+        elif state == STATE_FINISH:
+            winner_name = "Mark" if active == "mark" else "Cam"
+            next_name = "Cam" if active == "mark" else "Mark"
+            draw_finish_screen(screen, battle_font, battle_small_font, winner_name, next_name, wins)
 
         pygame.display.flip()
         clock.tick(60)
@@ -503,37 +667,7 @@ def draw_menu(screen, font, menu_options, selected_index):
         screen.blit(text_surface, text_rect)
 
 
-# ---------------- Forest / overworld ----------------
-
-def is_walkable(col, row):
-    """A tile is walkable if it's inside the map and isn't a tree."""
-    if row < 0 or row >= len(MAP_ROWS):
-        return False
-    if col < 0 or col >= MAP_COLS:
-        return False
-    return MAP_ROWS[row][col] == "."
-
-
-def draw_forest(screen, tree_image, grass_image):
-    for row in range(len(MAP_ROWS)):
-        for col in range(MAP_COLS):
-            x = col * TILE_SIZE
-            y = row * TILE_SIZE
-            tile = MAP_ROWS[row][col]
-
-            # checkerboard the ground a little so it doesn't look flat
-            grass = GRASS_COLOR if (row + col) % 2 == 0 else GRASS_COLOR_ALT
-            pygame.draw.rect(screen, grass, (x, y, TILE_SIZE, TILE_SIZE))
-
-            if tile == "T":
-                tw, th = tree_image.get_size()
-                screen.blit(tree_image, (x + (TILE_SIZE - tw) // 2, y + TILE_SIZE - th))
-            else:
-                gw, gh = grass_image.get_size()
-                screen.blit(grass_image, (x + (TILE_SIZE - gw) // 2, y + TILE_SIZE - gh))
-
-
-def draw_hud(screen, font, active, dragon_mode, respawn_seconds):
+def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins):
     hud_rect = pygame.Rect(0, HEIGHT - HUD_HEIGHT, WIDTH, HUD_HEIGHT)
     pygame.draw.rect(screen, BACKGROUND_COLOR, hud_rect)
 
@@ -547,7 +681,8 @@ def draw_hud(screen, font, active, dragon_mode, respawn_seconds):
         if dragon_mode:
             who += " (dragon!)"
         text = font.render(
-            f"Controlling: {who}  |  Arrows: move  |  U: switch  |  I: attack  |  D: transform  |  Esc: quit",
+            f"{who}'s turn - reach the finish!  (Wins: Mark {wins['mark']} - Cam {wins['cam']})"
+            f"  |  Arrows: move  |  I: attack  |  D: transform  |  Esc: quit",
             True, WHITE,
         )
     text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT - HUD_HEIGHT // 2))
@@ -630,8 +765,23 @@ def draw_battle_screen(
     elif battle_phase == "defeat":
         msg = big_font.render(f"{fighter_name} was knocked out!", True, DANGER_RED)
         screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT - 40)))
-        hint = small_font.render("Press Enter to wake up back at the start", True, (180, 180, 180))
+        hint = small_font.render("Press Enter - the other player is up next", True, (180, 180, 180))
         screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 16)))
+
+
+def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, wins):
+    screen.fill(BACKGROUND_COLOR)
+
+    msg = big_font.render(f"{winner_name} made it to the finish!", True, HP_GREEN)
+    screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 40)))
+
+    tally = small_font.render(
+        f"Wins so far - Mark: {wins['mark']}   Cam: {wins['cam']}", True, WHITE,
+    )
+    screen.blit(tally, tally.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 10)))
+
+    hint = small_font.render(f"Press Enter for {next_name}'s turn", True, (180, 180, 180))
+    screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 46)))
 
 
 if __name__ == "__main__":
