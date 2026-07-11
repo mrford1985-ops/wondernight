@@ -4,13 +4,17 @@ My first video game!
 
 A race through a big forest, starring Mark, a knight in golden armor
 with white hair, and his companion Cam, a boy with long brown hair and
-a red shirt with a yellow sunflower. Ten Dark Knights roam the forest,
-each one wandering to a new spot every 2 seconds.
+a red shirt with a yellow sunflower. Dark Knights roam the forest, each
+one wandering to a new spot every 2 seconds.
 
-Mark and Cam take turns trying to run from the START at the top of the
-map to the FINISH at the bottom. Bump into a Dark Knight and you'll
-have to fight it. Run out of health before you finish, and your turn
-ends - you'll start over from the top next time it's your go.
+Mark and Cam take turns trying to run from a random START to a FINISH
+on the opposite side of the map. Bump into a Dark Knight and you'll
+have to fight it. Reach the finish and you score 100 points and the
+forest gets 5 more Dark Knights for the next run. Defeat a Dark Knight
+and you score 50 points. Press D to transform into a dragon - dragons
+have 50% more health, but move 50% slower. If both racers fall in a
+row, everything resets: scores, wins, and the number of Dark Knights
+all go back to the start.
 
 Mark, Cam, the Dark Knight, the dragons, the sword, the fire, and the
 tree are all real hand-drawn art (from the assets/ folder). Only the
@@ -21,21 +25,24 @@ When you run this:
    middle of the screen (the intro).
 2. After 5 seconds, "Start" and "Quit" buttons appear at the bottom
    of the screen. Click one, or use the Up/Down arrow keys + Enter.
-3. Hit Start and Mark takes the first turn at the top of the forest.
+3. Hit Start and Mark takes the first turn from a random spot in the
+   forest.
    Controls:
      Arrow keys - move
      I          - swing! Mark swings his sword, Cam shoots fire
                   from his sunflower (just for show)
      D          - transform! Mark becomes a gold dragon, Cam becomes
-                  a red dragon (press D again to change back)
+                  a red dragon (press D again to change back). Dragons
+                  have more health but move more slowly.
      Esc        - quit any time
    Walking into a Dark Knight (or one wandering into you) starts a
    real battle:
      Up/Down - choose Attack or Run
      Enter   - confirm
-   Reach the finish and it becomes the other character's turn. Run
-   out of health and it also becomes the other character's turn -
-   you'll restart from the top next time.
+   Reach the finish and it becomes the other character's turn, with a
+   brand new random start and finish. Run out of health and it also
+   becomes the other character's turn - unless that makes two losses
+   in a row, in which case everything resets.
 """
 
 import os
@@ -69,7 +76,7 @@ STATE_OVERWORLD = "overworld"
 STATE_BATTLE = "battle"
 STATE_FINISH = "finish"
 
-# ---- Forest map (20 x 14 - double the size of the original) ----
+# ---- Forest map (20 x 14) ----
 # 'T' = tree (blocked), '.' = grass (walkable)
 TILE_SIZE = 80
 HUD_HEIGHT = 40
@@ -102,11 +109,12 @@ GRASS_COLOR_ALT = (30, 108, 30)
 START_COLOR = (70, 190, 90)
 FINISH_COLOR = (210, 180, 60)
 
-# Everyone's turn begins here, and the goal is to reach FINISH
-START_COL, START_ROW = 10, 1
-FINISH_COL, FINISH_ROW = 10, 12
+# Start and finish move every run - see pick_start_and_finish(). The finish is
+# always placed on the far side of the map from wherever the start landed.
+MIN_START_FINISH_DISTANCE = (MAP_COLS + MAP_ROW_COUNT) // 2
 
-ENEMY_COUNT = 20
+BASE_ENEMY_COUNT = 20      # how many Dark Knights the forest starts with
+ENEMIES_PER_WIN = 5        # extra Dark Knights added after each successful run
 ENEMY_MOVE_INTERVAL_MS = 2000
 RESPAWN_DELAY_MS = 30000  # 30 seconds after the last one falls, they all come back
 
@@ -119,13 +127,20 @@ FACING_OFFSET = {
     "right": (1, 0),
 }
 
-# ---- Combat stats ----
-MARK_MAX_HP = 30
-CAM_MAX_HP = 30
+# ---- Combat & scoring stats ----
+MARK_BASE_MAX_HP = 30
+CAM_BASE_MAX_HP = 30
 ENEMY_MAX_HP = 20
 PLAYER_ATK_RANGE = (4, 9)
 ENEMY_ATK_RANGE = (2, 6)
 BATTLE_OPTIONS = ["Attack", "Run"]
+
+SCORE_PER_WIN = 100
+SCORE_PER_KILL = 50
+
+DRAGON_HP_MULTIPLIER = 1.5          # dragons have 50% more health
+BASE_MOVE_COOLDOWN_MS = 150         # minimum time between steps
+DRAGON_MOVE_COOLDOWN_MS = BASE_MOVE_COOLDOWN_MS * 2   # dragons move 50% slower
 
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
@@ -175,6 +190,16 @@ def direction_from_delta(d_col, d_row):
     return "down"
 
 
+def base_max_hp(character):
+    return MARK_BASE_MAX_HP if character == "mark" else CAM_BASE_MAX_HP
+
+
+def effective_max_hp(character, is_dragon):
+    """Dragons carry 50% more health than their human max."""
+    base = base_max_hp(character)
+    return round(base * DRAGON_HP_MULTIPLIER) if is_dragon else base
+
+
 def compute_camera(col, row):
     """Center the camera on a tile, clamped so it never shows past the map edge."""
     px_x = col * TILE_SIZE + TILE_SIZE // 2
@@ -186,11 +211,44 @@ def compute_camera(col, row):
     return cam_x, cam_y
 
 
-def random_enemy_positions(count):
-    """Pick random walkable tiles for the Dark Knights, well clear of the start line."""
-    no_spawn = {(START_COL, START_ROW), (FINISH_COL, FINISH_ROW)}
+def nearest_open_tile(target_col, target_row, open_tiles):
+    """Find whichever walkable tile is closest to a (possibly off-map) target spot."""
+    target_col = max(0, min(MAP_COLS - 1, target_col))
+    target_row = max(0, min(MAP_ROW_COUNT - 1, target_row))
+    return min(open_tiles, key=lambda t: (t[0] - target_col) ** 2 + (t[1] - target_row) ** 2)
+
+
+def pick_start_and_finish():
+    """Pick a random start tile, then put the finish on the opposite side of the map."""
+    open_tiles = [
+        (col, row)
+        for row in range(MAP_ROW_COUNT)
+        for col in range(MAP_COLS)
+        if MAP_ROWS[row][col] == "."
+    ]
+    for _ in range(300):
+        start = random.choice(open_tiles)
+        mirror_col = (MAP_COLS - 1) - start[0]
+        mirror_row = (MAP_ROW_COUNT - 1) - start[1]
+        finish = nearest_open_tile(mirror_col, mirror_row, open_tiles)
+        if finish == start:
+            continue
+        distance = abs(finish[0] - start[0]) + abs(finish[1] - start[1])
+        if distance < MIN_START_FINISH_DISTANCE:
+            continue
+        return start, finish
+    # Fallback (shouldn't happen on a well-connected map): just take two far-apart tiles.
+    open_tiles_sorted = sorted(open_tiles, key=lambda t: t[0] + t[1])
+    return open_tiles_sorted[0], open_tiles_sorted[-1]
+
+
+def random_enemy_positions(count, start, finish, exclude=None):
+    """Pick random walkable tiles for the Dark Knights, clear of the start/finish and each other."""
+    no_spawn = {start, finish}
     for d_col, d_row in FACING_OFFSET.values():
-        no_spawn.add((START_COL + d_col, START_ROW + d_row))
+        no_spawn.add((start[0] + d_col, start[1] + d_row))
+    if exclude:
+        no_spawn |= set(exclude)
 
     open_tiles = [
         (col, row)
@@ -199,6 +257,7 @@ def random_enemy_positions(count):
         if MAP_ROWS[row][col] == "." and (col, row) not in no_spawn
     ]
     random.shuffle(open_tiles)
+    count = min(count, len(open_tiles))
     chosen = open_tiles[:count]
     return [{"col": col, "row": row} for col, row in chosen]
 
@@ -261,7 +320,7 @@ def draw_marker_tile(screen, x, y, color, letter, flag_color, font):
     screen.blit(letter_surface, letter_surface.get_rect(center=(pole_x + 14, y + 20)))
 
 
-def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y):
+def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y, start, finish):
     col_start = max(0, cam_x // TILE_SIZE)
     col_end = min(MAP_COLS, (cam_x + VIEWPORT_WIDTH) // TILE_SIZE + 2)
     row_start = max(0, cam_y // TILE_SIZE)
@@ -273,10 +332,10 @@ def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y):
             y = row * TILE_SIZE - cam_y
             tile = MAP_ROWS[row][col]
 
-            if (col, row) == (START_COL, START_ROW):
+            if (col, row) == start:
                 draw_marker_tile(screen, x, y, START_COLOR, "S", WHITE, marker_font)
                 continue
-            if (col, row) == (FINISH_COL, FINISH_ROW):
+            if (col, row) == finish:
                 draw_marker_tile(screen, x, y, FINISH_COLOR, "F", DANGER_RED, marker_font)
                 continue
 
@@ -299,7 +358,7 @@ def main():
 
     title_font = pygame.font.SysFont("arial", TITLE_FONT_SIZE, bold=True)
     menu_font = pygame.font.SysFont("arial", MENU_FONT_SIZE, bold=True)
-    hud_font = pygame.font.SysFont("arial", 16)
+    hud_font = pygame.font.SysFont("arial", 15)
     battle_font = pygame.font.SysFont("arial", 28, bold=True)
     battle_small_font = pygame.font.SysFont("arial", 18)
     marker_font = pygame.font.SysFont("arial", 22, bold=True)
@@ -344,20 +403,28 @@ def main():
 
     # ---- turn-based race state ----
     active = "mark"  # whoever's turn it is: "mark" or "cam"
-    mark_col, mark_row = START_COL, START_ROW
-    cam_col, cam_row = START_COL, START_ROW
+    mark_col, mark_row = 0, 0
+    cam_col, cam_row = 0, 0
     mark_facing = "down"
     cam_facing = "down"
-    mark_hp = MARK_MAX_HP
-    cam_hp = CAM_MAX_HP
+    mark_hp = MARK_BASE_MAX_HP
+    cam_hp = CAM_BASE_MAX_HP
     wins = {"mark": 0, "cam": 0}
+    scores = {"mark": 0, "cam": 0}
+    deaths_in_a_row = 0
+    pending_reset = False
 
     mark_attack_until = 0
     cam_attack_until = 0
-    dragon_mode = False  # press D to toggle - just for looks
+    dragon_mode = False  # press D to toggle - dragons are tougher but slower
+    last_move_time = 0
+
+    # ---- shared map state - re-randomized every time a fresh run begins ----
+    current_start, current_finish = pick_start_and_finish()
 
     # ---- enemies ----
-    enemies = random_enemy_positions(ENEMY_COUNT)
+    enemy_count = BASE_ENEMY_COUNT
+    enemies = random_enemy_positions(enemy_count, current_start, current_finish)
     last_enemy_move_time = pygame.time.get_ticks()
     all_defeated_at = None  # timestamp when the last Dark Knight fell, or None
 
@@ -370,14 +437,22 @@ def main():
     battle_log = []
 
     def start_turn_for(character):
-        """Send a character back to the start line, fully healed, for a fresh turn."""
+        """Send a character to a brand new random start, fully healed and human, for a fresh run."""
         nonlocal mark_col, mark_row, cam_col, cam_row, mark_hp, cam_hp
+        nonlocal current_start, current_finish, dragon_mode, last_move_time
+        current_start, current_finish = pick_start_and_finish()
+        dragon_mode = False
+        last_move_time = 0
         if character == "mark":
-            mark_col, mark_row = START_COL, START_ROW
-            mark_hp = MARK_MAX_HP
+            mark_col, mark_row = current_start
+            mark_hp = MARK_BASE_MAX_HP
         else:
-            cam_col, cam_row = START_COL, START_ROW
-            cam_hp = CAM_MAX_HP
+            cam_col, cam_row = current_start
+            cam_hp = CAM_BASE_MAX_HP
+
+    # give Mark his first run, and line Cam up at the same spot for when it's his turn
+    start_turn_for("mark")
+    cam_col, cam_row = current_start
 
     running = True
     while running:
@@ -401,7 +476,13 @@ def main():
 
                 elif state == STATE_OVERWORLD:
                     if event.key == pygame.K_d:
+                        old_max = effective_max_hp(active, dragon_mode)
                         dragon_mode = not dragon_mode
+                        new_max = effective_max_hp(active, dragon_mode)
+                        if active == "mark":
+                            mark_hp = max(1, min(new_max, round(mark_hp * new_max / old_max)))
+                        else:
+                            cam_hp = max(1, min(new_max, round(cam_hp * new_max / old_max)))
 
                     elif event.key == pygame.K_i:
                         if active == "mark":
@@ -421,40 +502,47 @@ def main():
                             d_row = 1
 
                         if d_col or d_row:
-                            new_direction = direction_from_delta(d_col, d_row)
-                            cur_col = mark_col if active == "mark" else cam_col
-                            cur_row = mark_row if active == "mark" else cam_row
+                            move_check_time = pygame.time.get_ticks()
+                            move_cooldown = DRAGON_MOVE_COOLDOWN_MS if dragon_mode else BASE_MOVE_COOLDOWN_MS
+                            if move_check_time - last_move_time >= move_cooldown:
+                                last_move_time = move_check_time
 
-                            if active == "mark":
-                                mark_facing = new_direction
-                            else:
-                                cam_facing = new_direction
+                                new_direction = direction_from_delta(d_col, d_row)
+                                cur_col = mark_col if active == "mark" else cam_col
+                                cur_row = mark_row if active == "mark" else cam_row
 
-                            new_col, new_row = cur_col + d_col, cur_row + d_row
-
-                            enemy_here = next(
-                                (e for e in enemies if (e["col"], e["row"]) == (new_col, new_row)),
-                                None,
-                            )
-
-                            if enemy_here is not None:
-                                state = STATE_BATTLE
-                                battle_enemy_ref = enemy_here
-                                battle_fighter = active
-                                battle_enemy_hp = ENEMY_MAX_HP
-                                battle_phase = "choose"
-                                battle_selected = 0
-                                battle_log = []
-
-                            elif is_walkable(new_col, new_row):
                                 if active == "mark":
-                                    mark_col, mark_row = new_col, new_row
+                                    mark_facing = new_direction
                                 else:
-                                    cam_col, cam_row = new_col, new_row
+                                    cam_facing = new_direction
 
-                                if (new_col, new_row) == (FINISH_COL, FINISH_ROW):
-                                    wins[active] += 1
-                                    state = STATE_FINISH
+                                new_col, new_row = cur_col + d_col, cur_row + d_row
+
+                                enemy_here = next(
+                                    (e for e in enemies if (e["col"], e["row"]) == (new_col, new_row)),
+                                    None,
+                                )
+
+                                if enemy_here is not None:
+                                    state = STATE_BATTLE
+                                    battle_enemy_ref = enemy_here
+                                    battle_fighter = active
+                                    battle_enemy_hp = ENEMY_MAX_HP
+                                    battle_phase = "choose"
+                                    battle_selected = 0
+                                    battle_log = []
+
+                                elif is_walkable(new_col, new_row):
+                                    if active == "mark":
+                                        mark_col, mark_row = new_col, new_row
+                                    else:
+                                        cam_col, cam_row = new_col, new_row
+
+                                    if (new_col, new_row) == current_finish:
+                                        wins[active] += 1
+                                        scores[active] += SCORE_PER_WIN
+                                        deaths_in_a_row = 0
+                                        state = STATE_FINISH
 
                 elif state == STATE_BATTLE:
                     if battle_phase == "choose":
@@ -477,6 +565,7 @@ def main():
                                 if battle_enemy_hp <= 0:
                                     battle_enemy_hp = 0
                                     battle_phase = "victory"
+                                    scores[battle_fighter] += SCORE_PER_KILL
                                 else:
                                     enemy_dmg = random.randint(*ENEMY_ATK_RANGE)
                                     if battle_fighter == "mark":
@@ -490,6 +579,8 @@ def main():
                                     )
                                     if fighter_hp_after <= 0:
                                         battle_phase = "defeat"
+                                        deaths_in_a_row += 1
+                                        pending_reset = deaths_in_a_row >= 2
 
                     elif battle_phase == "victory":
                         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
@@ -500,16 +591,36 @@ def main():
 
                     elif battle_phase == "defeat":
                         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                            # this character's turn is over - pass it to the other one
-                            active = "cam" if active == "mark" else "mark"
-                            start_turn_for(active)
+                            if pending_reset:
+                                # both racers have fallen in a row - start completely over
+                                scores["mark"] = 0
+                                scores["cam"] = 0
+                                wins["mark"] = 0
+                                wins["cam"] = 0
+                                enemy_count = BASE_ENEMY_COUNT
+                                deaths_in_a_row = 0
+                                pending_reset = False
+                                active = "cam" if active == "mark" else "mark"
+                                start_turn_for(active)
+                                enemies = random_enemy_positions(enemy_count, current_start, current_finish)
+                                all_defeated_at = None
+                            else:
+                                # this character's turn is over - pass it to the other one
+                                active = "cam" if active == "mark" else "mark"
+                                start_turn_for(active)
                             battle_enemy_ref = None
                             state = STATE_OVERWORLD
 
                 elif state == STATE_FINISH:
                     if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        enemy_count += ENEMIES_PER_WIN
                         active = "cam" if active == "mark" else "mark"
                         start_turn_for(active)
+                        extra_knights = random_enemy_positions(
+                            ENEMIES_PER_WIN, current_start, current_finish,
+                            exclude={(e["col"], e["row"]) for e in enemies},
+                        )
+                        enemies.extend(extra_knights)
                         state = STATE_OVERWORLD
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -568,7 +679,7 @@ def main():
             if not enemies and all_defeated_at is None:
                 all_defeated_at = now
             if all_defeated_at is not None and now - all_defeated_at >= RESPAWN_DELAY_MS:
-                enemies = random_enemy_positions(ENEMY_COUNT)
+                enemies = random_enemy_positions(enemy_count, current_start, current_finish)
                 all_defeated_at = None
 
         respawn_seconds = None
@@ -592,7 +703,7 @@ def main():
             active_facing = mark_facing if active == "mark" else cam_facing
             cam_x, cam_y = compute_camera(active_col, active_row)
 
-            draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y)
+            draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y, current_start, current_finish)
 
             for enemy in enemies:
                 draw_image_character(screen, dark_knight_image, enemy["col"], enemy["row"], cam_x, cam_y)
@@ -611,24 +722,25 @@ def main():
                 effect = sword_by_facing if active == "mark" else fire_by_facing
                 draw_attack_effect_image(screen, effect, active_col, active_row, active_facing, cam_x, cam_y)
 
-            draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds, wins)
+            draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds, wins, scores)
 
         elif state == STATE_BATTLE:
             fighter_image = mark_portrait if battle_fighter == "mark" else cam_portrait
             fighter_name = "Mark" if battle_fighter == "mark" else "Cam"
             fighter_hp = mark_hp if battle_fighter == "mark" else cam_hp
-            fighter_max_hp = MARK_MAX_HP if battle_fighter == "mark" else CAM_MAX_HP
+            fighter_max_hp = effective_max_hp(battle_fighter, dragon_mode)
 
             draw_battle_screen(
                 screen, battle_font, battle_small_font,
                 fighter_image, fighter_name, fighter_hp, fighter_max_hp,
                 dark_knight_portrait, battle_enemy_hp, battle_phase, battle_selected, battle_log,
+                pending_reset,
             )
 
         elif state == STATE_FINISH:
             winner_name = "Mark" if active == "mark" else "Cam"
             next_name = "Cam" if active == "mark" else "Mark"
-            draw_finish_screen(screen, battle_font, battle_small_font, winner_name, next_name, wins)
+            draw_finish_screen(screen, battle_font, battle_small_font, winner_name, next_name, wins, scores)
 
         pygame.display.flip()
         clock.tick(60)
@@ -667,7 +779,7 @@ def draw_menu(screen, font, menu_options, selected_index):
         screen.blit(text_surface, text_rect)
 
 
-def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins):
+def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins, scores):
     hud_rect = pygame.Rect(0, HEIGHT - HUD_HEIGHT, WIDTH, HUD_HEIGHT)
     pygame.draw.rect(screen, BACKGROUND_COLOR, hud_rect)
 
@@ -681,8 +793,8 @@ def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins):
         if dragon_mode:
             who += " (dragon!)"
         text = font.render(
-            f"{who}'s turn - reach the finish!  (Wins: Mark {wins['mark']} - Cam {wins['cam']})"
-            f"  |  Arrows: move  |  I: attack  |  D: transform  |  Esc: quit",
+            f"{who}'s turn!  Mark {wins['mark']}W/{scores['mark']}pt  "
+            f"Cam {wins['cam']}W/{scores['cam']}pt  |  Move:Arrows  Attack:I  Dragon:D  Quit:Esc",
             True, WHITE,
         )
     text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT - HUD_HEIGHT // 2))
@@ -704,6 +816,7 @@ def draw_battle_screen(
     screen, big_font, small_font,
     fighter_image, fighter_name, fighter_hp, fighter_max_hp,
     dark_knight_portrait, enemy_hp, battle_phase, battle_selected, battle_log,
+    pending_reset=False,
 ):
     screen.fill(BACKGROUND_COLOR)
 
@@ -757,7 +870,7 @@ def draw_battle_screen(
             )
 
     elif battle_phase == "victory":
-        msg = big_font.render("You defeated the Dark Knight!", True, HP_GREEN)
+        msg = big_font.render(f"You defeated the Dark Knight! +{SCORE_PER_KILL} points", True, HP_GREEN)
         screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT - 40)))
         hint = small_font.render("Press Enter to continue", True, (180, 180, 180))
         screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 16)))
@@ -765,23 +878,35 @@ def draw_battle_screen(
     elif battle_phase == "defeat":
         msg = big_font.render(f"{fighter_name} was knocked out!", True, DANGER_RED)
         screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT - 40)))
-        hint = small_font.render("Press Enter - the other player is up next", True, (180, 180, 180))
+        if pending_reset:
+            hint = small_font.render(
+                "Both racers have fallen! Press Enter to reset everything", True, (180, 180, 180)
+            )
+        else:
+            hint = small_font.render("Press Enter - the other player is up next", True, (180, 180, 180))
         screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 16)))
 
 
-def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, wins):
+def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, wins, scores):
     screen.fill(BACKGROUND_COLOR)
 
-    msg = big_font.render(f"{winner_name} made it to the finish!", True, HP_GREEN)
-    screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 40)))
+    msg = big_font.render(f"{winner_name} made it to the finish! +{SCORE_PER_WIN} points", True, HP_GREEN)
+    screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 56)))
 
     tally = small_font.render(
-        f"Wins so far - Mark: {wins['mark']}   Cam: {wins['cam']}", True, WHITE,
+        f"Wins - Mark: {wins['mark']}   Cam: {wins['cam']}     "
+        f"Score - Mark: {scores['mark']}   Cam: {scores['cam']}",
+        True, WHITE,
     )
-    screen.blit(tally, tally.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 10)))
+    screen.blit(tally, tally.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 10)))
+
+    warning = small_font.render(
+        f"{ENEMIES_PER_WIN} more Dark Knights have joined the forest!", True, YELLOW,
+    )
+    screen.blit(warning, warning.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 24)))
 
     hint = small_font.render(f"Press Enter for {next_name}'s turn", True, (180, 180, 180))
-    screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 46)))
+    screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 58)))
 
 
 if __name__ == "__main__":
