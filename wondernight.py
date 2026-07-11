@@ -10,9 +10,12 @@ new spot every 2 seconds.
 
 Racers take turns trying to run from a random START to a FINISH on the
 opposite side of the map. Bump into a Dark Knight and you'll have to
-fight it. Reach the finish and you score 100 points and the forest
-gets 5 more Dark Knights for the next run. Defeat a Dark Knight and
-you score 50 points. Press D to transform into a dragon - dragons have
+fight it. Reach the finish and you score 100 points; defeat a Dark
+Knight and you score 50 points. The forest gets a little more
+dangerous with every run: everybody's 1st run has 20 Dark Knights,
+everybody's 2nd run has 25, everybody's 3rd run has 30, and so on -
+so it's always a fair fight no matter whose turn it is or how earlier
+runs went. Press D to transform into a dragon - dragons have
 50% more health, take only half damage in combat, but can only take
 one step per second, so plan your moves! If a character is knocked
 out, they sit out and whoever's still alive keeps racing (and racking
@@ -127,8 +130,8 @@ FINISH_COLOR = (210, 180, 60)
 # always placed on the far side of the map from wherever the start landed.
 MIN_START_FINISH_DISTANCE = (MAP_COLS + MAP_ROW_COUNT) // 2
 
-BASE_ENEMY_COUNT = 20      # how many Dark Knights the forest starts with
-ENEMIES_PER_WIN = 5        # extra Dark Knights added after each successful run
+BASE_ENEMY_COUNT = 20        # how many Dark Knights are in everyone's first run
+ENEMIES_PER_ROUND = 5        # extra Dark Knights added each subsequent run
 ENEMY_MOVE_INTERVAL_MS = 2000
 RESPAWN_DELAY_MS = 30000  # 30 seconds after the last one falls, they all come back
 
@@ -229,6 +232,14 @@ def pick_next_active(current, alive):
         if alive[candidate]:
             return candidate
     return current
+
+
+def enemy_count_for_run(run_number):
+    """Run #1 has BASE_ENEMY_COUNT Dark Knights; every run after that adds
+    ENEMIES_PER_ROUND more. Since this only depends on the run number, every
+    character's Nth run always has the same number of Dark Knights, no
+    matter the turn order or how earlier runs went."""
+    return BASE_ENEMY_COUNT + ENEMIES_PER_ROUND * (run_number - 1)
 
 
 def compute_camera(col, row):
@@ -480,7 +491,8 @@ def main():
     current_start, current_finish = pick_start_and_finish()
 
     # ---- enemies ----
-    enemy_count = BASE_ENEMY_COUNT
+    runs_taken = {c: 0 for c in CHARACTER_ORDER}  # how many runs each character has started
+    current_run_enemy_count = BASE_ENEMY_COUNT    # target Dark Knight count for the active run
     enemies = []
     last_enemy_move_time = pygame.time.get_ticks()
     all_defeated_at = None  # timestamp when the last Dark Knight fell, or None
@@ -494,30 +506,34 @@ def main():
     battle_log = []
 
     def start_turn_for(character):
-        """Send a character to a brand new random start, fully healed and human, for a fresh run."""
+        """Send a character to a brand new random start, fully healed and human, for a
+        fresh run, with a freshly-stocked forest sized for that character's run number."""
         nonlocal current_start, current_finish, dragon_mode, last_move_time
+        nonlocal enemies, all_defeated_at, current_run_enemy_count
         current_start, current_finish = pick_start_and_finish()
         dragon_mode = False
         last_move_time = 0
         pos[character] = current_start
         hp[character] = BASE_MAX_HP[character]
+        runs_taken[character] += 1
+        current_run_enemy_count = enemy_count_for_run(runs_taken[character])
+        enemies = random_enemy_positions(current_run_enemy_count, current_start, current_finish)
+        all_defeated_at = None
 
     def full_reset():
         """Wipe the board for a brand new game - used at startup and on Restart."""
-        nonlocal enemy_count, enemies, all_defeated_at, active
+        nonlocal active
         for c in CHARACTER_ORDER:
             scores[c] = 0
             wins[c] = 0
             alive[c] = True
-        enemy_count = BASE_ENEMY_COUNT
+            runs_taken[c] = 0
         active = CHARACTER_ORDER[0]
         start_turn_for(active)
         for c in CHARACTER_ORDER:
             if c != active:
                 pos[c] = current_start
                 hp[c] = BASE_MAX_HP[c]
-        enemies = random_enemy_positions(enemy_count, current_start, current_finish)
-        all_defeated_at = None
 
     full_reset()
 
@@ -656,14 +672,8 @@ def main():
 
                 elif state == STATE_FINISH:
                     if event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                        enemy_count += ENEMIES_PER_WIN
                         active = pick_next_active(active, alive)
                         start_turn_for(active)
-                        extra_knights = random_enemy_positions(
-                            ENEMIES_PER_WIN, current_start, current_finish,
-                            exclude={(e["col"], e["row"]) for e in enemies},
-                        )
-                        enemies.extend(extra_knights)
                         state = STATE_OVERWORLD
 
                 elif state == STATE_GAME_OVER:
@@ -746,7 +756,7 @@ def main():
             if not enemies and all_defeated_at is None:
                 all_defeated_at = now
             if all_defeated_at is not None and now - all_defeated_at >= RESPAWN_DELAY_MS:
-                enemies = random_enemy_positions(enemy_count, current_start, current_finish)
+                enemies = random_enemy_positions(current_run_enemy_count, current_start, current_finish)
                 all_defeated_at = None
 
         respawn_seconds = None
@@ -805,7 +815,11 @@ def main():
             winner_name = DISPLAY_NAME[active]
             next_active = pick_next_active(active, alive)
             next_name = DISPLAY_NAME[next_active]
-            draw_finish_screen(screen, battle_font, battle_small_font, winner_name, next_name, wins, scores)
+            next_run_enemy_count = enemy_count_for_run(runs_taken[next_active] + 1)
+            draw_finish_screen(
+                screen, battle_font, battle_small_font,
+                winner_name, next_name, wins, scores, next_run_enemy_count,
+            )
 
         elif state == STATE_GAME_OVER:
             draw_game_over_screen(screen, game_over_font, battle_font, battle_small_font, wins, scores, game_over_selected)
@@ -956,7 +970,7 @@ def draw_battle_screen(
         screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 16)))
 
 
-def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, wins, scores):
+def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, wins, scores, next_run_enemy_count):
     screen.fill(BACKGROUND_COLOR)
 
     msg = big_font.render(f"{winner_name} made it to the finish! +{SCORE_PER_WIN} points", True, HP_GREEN)
@@ -969,7 +983,7 @@ def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, win
     screen.blit(tally, tally.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 10)))
 
     warning = small_font.render(
-        f"{ENEMIES_PER_WIN} more Dark Knights have joined the forest!", True, YELLOW,
+        f"{next_name} faces {next_run_enemy_count} Dark Knights next!", True, YELLOW,
     )
     screen.blit(warning, warning.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 24)))
 
