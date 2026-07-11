@@ -20,9 +20,9 @@ up points). Once EVERY character has been knocked out, it's game over
 - a screen shows everyone's final wins and scores, with the option to
 restart or quit.
 
-Mark, Cam, Oni, the Dark Knight, the dragons, the sword, the fire, and
-the tree are all real hand-drawn art (from the assets/ folder). Only
-the ground tiles are still simple flat colors.
+Mark, Cam, Oni, the Dark Knight, the dragons, the golden fist, the fire,
+the dark fireball, and the tree are all real hand-drawn art (from the
+assets/ folder). Only the ground tiles are still simple flat colors.
 
 When you run this:
 1. A black window pops up and "Wondernight" flashes blue/green in the
@@ -33,7 +33,8 @@ When you run this:
    forest.
    Controls:
      Arrow keys - move
-     I          - swing/attack! (just for show)
+     I          - attack! Mark throws a golden fist, Cam shoots fire,
+                  Oni hurls a dark fireball (just for show)
      D          - transform! Dragons have more health and take half
                   damage in fights, but can only move once per second -
                   extra movement key presses while on cooldown are
@@ -166,8 +167,9 @@ DARK_KNIGHT_TARGET_H = 130
 DRAGON_TARGET_W = 170
 TREE_TARGET_H = 100
 GRASS_TARGET_W = 28  # small ground texture tuft, scattered one per grass tile
-SWORD_TARGET_H = 65
+GOLD_FIST_TARGET_H = 65
 FIRE_TARGET_W = 65
+ONI_FIREBALL_TARGET_W = 70
 BATTLE_PORTRAIT_H = 140       # bigger version of each racer/dragon for the battle screen
 DARK_KNIGHT_BATTLE_H = 170    # bigger version of the Dark Knight for the battle screen
 
@@ -417,18 +419,19 @@ def main():
     dark_knight_image = load_scaled("dark_knight.png", target_h=DARK_KNIGHT_TARGET_H)
     tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
     grass_image = load_scaled("grass.png", target_w=GRASS_TARGET_W)
-    sword_up = load_scaled("sword.png", target_h=SWORD_TARGET_H)
+    gold_fist_up = load_scaled("gold_fist.png", target_h=GOLD_FIST_TARGET_H)
     fire_right = load_scaled("fire.png", target_w=FIRE_TARGET_W)
+    oni_fireball_right = load_scaled("oni_fireball.png", target_w=ONI_FIREBALL_TARGET_W)
     dark_knight_portrait = load_scaled("dark_knight.png", target_h=DARK_KNIGHT_BATTLE_H)
 
     # pre-rotate/flip the attack effects for each direction, once, up front.
-    # Mark swings a sword and Cam shoots fire; Oni doesn't have a dedicated
-    # attack effect asset yet, so his "I" press is a silent flourish for now.
-    sword_by_facing = {
-        "up": sword_up,
-        "down": pygame.transform.rotate(sword_up, 180),
-        "left": pygame.transform.rotate(sword_up, 90),
-        "right": pygame.transform.rotate(sword_up, -90),
+    # Mark punches with a golden fist, Cam shoots fire, and Oni hurls a dark
+    # purple fireball.
+    gold_fist_by_facing = {
+        "up": gold_fist_up,
+        "down": pygame.transform.rotate(gold_fist_up, 180),
+        "left": pygame.transform.rotate(gold_fist_up, 90),
+        "right": pygame.transform.rotate(gold_fist_up, -90),
     }
     fire_by_facing = {
         "right": fire_right,
@@ -436,7 +439,17 @@ def main():
         "up": pygame.transform.rotate(fire_right, 90),
         "down": pygame.transform.rotate(fire_right, -90),
     }
-    attack_effects_by_facing = {"mark": sword_by_facing, "cam": fire_by_facing}
+    oni_fireball_by_facing = {
+        "right": oni_fireball_right,
+        "left": pygame.transform.flip(oni_fireball_right, True, False),
+        "up": pygame.transform.rotate(oni_fireball_right, 90),
+        "down": pygame.transform.rotate(oni_fireball_right, -90),
+    }
+    attack_effects_by_facing = {
+        "mark": gold_fist_by_facing,
+        "cam": fire_by_facing,
+        "oni": oni_fireball_by_facing,
+    }
 
     colors = [BLUE, GREEN]
     color_index = 0
