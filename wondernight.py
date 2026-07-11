@@ -13,9 +13,13 @@ opposite side of the map. Bump into a Dark Knight and you'll have to
 fight it. Reach the finish and you score 100 points; defeat a Dark
 Knight and you score 50 points. The forest gets a little more
 dangerous with every run: everybody's 1st run has 20 Dark Knights,
-everybody's 2nd run has 25, everybody's 3rd run has 30, and so on -
-so it's always a fair fight no matter whose turn it is or how earlier
-runs went. Press D to transform into a dragon - dragons have
+everybody's 2nd run has 25, everybody's 3rd run has 30, and 30 is the
+cap - so it's always a fair fight no matter whose turn it is or how
+earlier runs went. Once every living character has raced at the 30
+Dark Knight cap, the Dark Knights get faster (2 seconds off their
+wander speed every such round, down to a floor), so things only get
+more intense from there. Press D to transform into a dragon - dragons
+have
 50% more health, take only half damage in combat, but can only take
 one step per second, so plan your moves! If a character is knocked
 out, they sit out and whoever's still alive keeps racing (and racking
@@ -44,9 +48,11 @@ When you run this:
                   ignored.
      Esc        - quit any time
    Walking into a Dark Knight (or one wandering into you) starts a
-   real battle:
-     Up/Down - choose Attack or Run
-     Enter   - confirm
+   real battle - there's no running away, so land your attack! You can
+   even get the jump on a Dark Knight: hit I while facing one out in
+   the forest and you'll strike first, sending it flying and winning
+   the fight before a battle even starts.
+     Enter   - confirm the attack
    Reach the finish and it becomes the next living character's turn,
    with a brand new random start and finish. Run out of health and
    that character is knocked out for good this game - whoever's left
@@ -132,10 +138,15 @@ MIN_START_FINISH_DISTANCE = (MAP_COLS + MAP_ROW_COUNT) // 2
 
 BASE_ENEMY_COUNT = 20        # how many Dark Knights are in everyone's first run
 ENEMIES_PER_ROUND = 5        # extra Dark Knights added each subsequent run
-ENEMY_MOVE_INTERVAL_MS = 2000
+MAX_ENEMY_COUNT = 30         # Dark Knight count stops growing once it hits this cap
+
+ENEMY_MOVE_INTERVAL_MS = 2000       # how often Dark Knights wander to a new tile
+ENEMY_SPEED_STEP_MS = 2000          # once capped, they move this much faster every full round
+MIN_ENEMY_MOVE_INTERVAL_MS = 100    # floor so the speed-up can never hit zero/negative
 RESPAWN_DELAY_MS = 30000  # 30 seconds after the last one falls, they all come back
 
 ATTACK_DURATION_MS = 350
+KNOCKBACK_DURATION_MS = 450  # how long a pre-emptively struck Dark Knight takes to fly off screen
 
 FACING_OFFSET = {
     "up": (0, -1),
@@ -149,7 +160,7 @@ BASE_MAX_HP = {"mark": 30, "cam": 30, "oni": 30}
 ENEMY_MAX_HP = 20
 PLAYER_ATK_RANGE = (4, 9)
 ENEMY_ATK_RANGE = (2, 6)
-BATTLE_OPTIONS = ["Attack", "Run"]
+BATTLE_OPTIONS = ["Attack"]  # running from a fight isn't allowed - you have to see it through
 
 SCORE_PER_WIN = 100
 SCORE_PER_KILL = 50
@@ -236,10 +247,18 @@ def pick_next_active(current, alive):
 
 def enemy_count_for_run(run_number):
     """Run #1 has BASE_ENEMY_COUNT Dark Knights; every run after that adds
-    ENEMIES_PER_ROUND more. Since this only depends on the run number, every
-    character's Nth run always has the same number of Dark Knights, no
-    matter the turn order or how earlier runs went."""
-    return BASE_ENEMY_COUNT + ENEMIES_PER_ROUND * (run_number - 1)
+    ENEMIES_PER_ROUND more, capped at MAX_ENEMY_COUNT. Since this only
+    depends on the run number, every character's Nth run always has the
+    same number of Dark Knights, no matter the turn order or how earlier
+    runs went."""
+    return min(MAX_ENEMY_COUNT, BASE_ENEMY_COUNT + ENEMIES_PER_ROUND * (run_number - 1))
+
+
+def enemy_move_interval(speed_round):
+    """Once the Dark Knight count is capped, every full round after that
+    makes them wander faster by shaving ENEMY_SPEED_STEP_MS off their
+    movement interval, floored so it can't reach zero."""
+    return max(MIN_ENEMY_MOVE_INTERVAL_MS, ENEMY_MOVE_INTERVAL_MS - ENEMY_SPEED_STEP_MS * speed_round)
 
 
 def compute_camera(col, row):
@@ -350,6 +369,27 @@ def draw_attack_effect_image(screen, images_by_facing, col, row, facing, cam_x, 
     x = target_col * TILE_SIZE - cam_x + (TILE_SIZE - w) // 2
     y = target_row * TILE_SIZE - cam_y + (TILE_SIZE - h) // 2
     screen.blit(image, (x, y))
+
+
+def draw_knockback_effect(screen, dark_knight_image, effect, cam_x, cam_y, now):
+    """Send a pre-emptively struck Dark Knight sliding and fading off screen."""
+    elapsed = now - effect["start_time"]
+    progress = min(1.0, elapsed / KNOCKBACK_DURATION_MS)
+
+    d_col, d_row = FACING_OFFSET.get(effect["direction"], (0, 1))
+    w, h = dark_knight_image.get_size()
+    base_x = effect["col"] * TILE_SIZE - cam_x + (TILE_SIZE - w) // 2
+    base_y = effect["row"] * TILE_SIZE - cam_y + TILE_SIZE - h
+
+    # slide away in the direction it was struck, with a little upward pop
+    slide = progress * TILE_SIZE * 3
+    pop = -80 * progress * (1 - progress) * 4
+    x = base_x + d_col * slide
+    y = base_y + d_row * slide + pop
+
+    faded = dark_knight_image.copy()
+    faded.set_alpha(max(0, int(255 * (1 - progress))))
+    screen.blit(faded, (x, y))
 
 
 def draw_marker_tile(screen, x, y, color, letter, flag_color, font):
@@ -497,6 +537,15 @@ def main():
     last_enemy_move_time = pygame.time.get_ticks()
     all_defeated_at = None  # timestamp when the last Dark Knight fell, or None
 
+    # once the Dark Knight count caps out, movement speeds up every time a full
+    # "round" passes - i.e. every currently-alive character has had one capped run
+    capped_run_participants = set()
+    speed_round = 0
+
+    # brief "flies off screen" animation for a Dark Knight struck pre-emptively
+    # with the I key, before a full battle ever starts
+    knockback_effect = None
+
     # ---- battle state (only meaningful while state == STATE_BATTLE) ----
     battle_enemy_ref = None     # the actual enemy dict currently being fought
     battle_fighter = "mark"     # who's fighting
@@ -509,7 +558,7 @@ def main():
         """Send a character to a brand new random start, fully healed and human, for a
         fresh run, with a freshly-stocked forest sized for that character's run number."""
         nonlocal current_start, current_finish, dragon_mode, last_move_time
-        nonlocal enemies, all_defeated_at, current_run_enemy_count
+        nonlocal enemies, all_defeated_at, current_run_enemy_count, speed_round
         current_start, current_finish = pick_start_and_finish()
         dragon_mode = False
         last_move_time = 0
@@ -520,14 +569,24 @@ def main():
         enemies = random_enemy_positions(current_run_enemy_count, current_start, current_finish)
         all_defeated_at = None
 
+        if current_run_enemy_count >= MAX_ENEMY_COUNT:
+            capped_run_participants.add(character)
+            still_alive = {c for c in CHARACTER_ORDER if alive[c]}
+            if still_alive and still_alive.issubset(capped_run_participants):
+                speed_round += 1
+                capped_run_participants.clear()
+
     def full_reset():
         """Wipe the board for a brand new game - used at startup and on Restart."""
-        nonlocal active
+        nonlocal active, speed_round, knockback_effect
         for c in CHARACTER_ORDER:
             scores[c] = 0
             wins[c] = 0
             alive[c] = True
             runs_taken[c] = 0
+        capped_run_participants.clear()
+        speed_round = 0
+        knockback_effect = None
         active = CHARACTER_ORDER[0]
         start_turn_for(active)
         for c in CHARACTER_ORDER:
@@ -566,6 +625,26 @@ def main():
 
                     elif event.key == pygame.K_i:
                         attack_until[active] = pygame.time.get_ticks() + ATTACK_DURATION_MS
+
+                        # pre-emptive strike: catch a Dark Knight standing right
+                        # where the attack lands and it's defeated on the spot -
+                        # no need to step into a full battle
+                        strike_d_col, strike_d_row = FACING_OFFSET[facing[active]]
+                        strike_col = pos[active][0] + strike_d_col
+                        strike_row = pos[active][1] + strike_d_row
+                        struck_enemy = next(
+                            (e for e in enemies if (e["col"], e["row"]) == (strike_col, strike_row)),
+                            None,
+                        )
+                        if struck_enemy is not None:
+                            enemies.remove(struck_enemy)
+                            scores[active] += SCORE_PER_KILL
+                            knockback_effect = {
+                                "col": struck_enemy["col"],
+                                "row": struck_enemy["row"],
+                                "direction": facing[active],
+                                "start_time": pygame.time.get_ticks(),
+                            }
 
                     else:
                         d_col, d_row = 0, 0
@@ -615,41 +694,31 @@ def main():
 
                 elif state == STATE_BATTLE:
                     if battle_phase == "choose":
-                        if event.key in (pygame.K_UP, pygame.K_DOWN):
-                            battle_selected = (battle_selected + 1) % len(BATTLE_OPTIONS)
+                        if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                            fighter_name = DISPLAY_NAME[battle_fighter]
+                            player_dmg = random.randint(*PLAYER_ATK_RANGE)
+                            battle_enemy_hp -= player_dmg
+                            battle_log = [f"{fighter_name} hits the Dark Knight for {player_dmg}!"]
 
-                        elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                            choice = BATTLE_OPTIONS[battle_selected]
-
-                            if choice == "Run":
-                                state = STATE_OVERWORLD
-                                battle_enemy_ref = None
-
-                            elif choice == "Attack":
-                                fighter_name = DISPLAY_NAME[battle_fighter]
-                                player_dmg = random.randint(*PLAYER_ATK_RANGE)
-                                battle_enemy_hp -= player_dmg
-                                battle_log = [f"{fighter_name} hits the Dark Knight for {player_dmg}!"]
-
-                                if battle_enemy_hp <= 0:
-                                    battle_enemy_hp = 0
-                                    battle_phase = "victory"
-                                    scores[battle_fighter] += SCORE_PER_KILL
-                                else:
-                                    enemy_dmg = random.randint(*ENEMY_ATK_RANGE)
-                                    if dragon_mode:
-                                        # dragons take half damage in combat
-                                        enemy_dmg = max(1, round(enemy_dmg * DRAGON_DAMAGE_TAKEN_MULTIPLIER))
-                                    hp[battle_fighter] = max(0, hp[battle_fighter] - enemy_dmg)
-                                    fighter_hp_after = hp[battle_fighter]
-                                    battle_log.append(
-                                        f"The Dark Knight hits {fighter_name} for {enemy_dmg}!"
+                            if battle_enemy_hp <= 0:
+                                battle_enemy_hp = 0
+                                battle_phase = "victory"
+                                scores[battle_fighter] += SCORE_PER_KILL
+                            else:
+                                enemy_dmg = random.randint(*ENEMY_ATK_RANGE)
+                                if dragon_mode:
+                                    # dragons take half damage in combat
+                                    enemy_dmg = max(1, round(enemy_dmg * DRAGON_DAMAGE_TAKEN_MULTIPLIER))
+                                hp[battle_fighter] = max(0, hp[battle_fighter] - enemy_dmg)
+                                fighter_hp_after = hp[battle_fighter]
+                                battle_log.append(
+                                    f"The Dark Knight hits {fighter_name} for {enemy_dmg}!"
+                                )
+                                if fighter_hp_after <= 0:
+                                    battle_phase = "defeat"
+                                    pending_game_over = not any(
+                                        alive[c] for c in CHARACTER_ORDER if c != battle_fighter
                                     )
-                                    if fighter_hp_after <= 0:
-                                        battle_phase = "defeat"
-                                        pending_game_over = not any(
-                                            alive[c] for c in CHARACTER_ORDER if c != battle_fighter
-                                        )
 
                     elif battle_phase == "victory":
                         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
@@ -733,7 +802,7 @@ def main():
 
         if state == STATE_OVERWORLD:
             # every Dark Knight wanders to a new tile every couple of seconds
-            if now - last_enemy_move_time >= ENEMY_MOVE_INTERVAL_MS:
+            if now - last_enemy_move_time >= enemy_move_interval(speed_round):
                 last_enemy_move_time = now
                 move_enemies(enemies)
 
@@ -783,6 +852,11 @@ def main():
 
             for enemy in enemies:
                 draw_image_character(screen, dark_knight_image, enemy["col"], enemy["row"], cam_x, cam_y)
+
+            if knockback_effect is not None:
+                draw_knockback_effect(screen, dark_knight_image, knockback_effect, cam_x, cam_y, now)
+                if now - knockback_effect["start_time"] >= KNOCKBACK_DURATION_MS:
+                    knockback_effect = None
 
             draw_active_marker(screen, active_col, active_row, cam_x, cam_y)
 
