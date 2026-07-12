@@ -151,7 +151,7 @@ ENEMIES_PER_ROUND = 5        # extra Dark Knights added each subsequent run
 MAX_ENEMY_COUNT = 30         # Dark Knight count stops growing once it hits this cap
 
 ENEMY_MOVE_INTERVAL_MS = 2000       # how often Dark Knights wander to a new tile
-ENEMY_SPEED_STEP_MS = 2000          # once capped, they move this much faster every full round
+ENEMY_SPEED_STEP_MS = 400          # once capped, they move this much faster every full round
 MIN_ENEMY_MOVE_INTERVAL_MS = 100    # floor so the speed-up can never hit zero/negative
 RESPAWN_DELAY_MS = 30000  # 30 seconds after the last one falls, they all come back
 
