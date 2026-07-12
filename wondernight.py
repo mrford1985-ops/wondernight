@@ -36,8 +36,15 @@ When you run this:
    middle of the screen (the intro).
 2. After 5 seconds, "Start" and "Quit" buttons appear at the bottom
    of the screen. Click one, or use the Up/Down arrow keys + Enter.
-3. Hit Start and Mark takes the first turn from a random spot in the
-   forest.
+3. Hit Start and a "Select Racers" screen lets you check on any mix of
+   Mark, Cam, and Oni - 1, 2, or all 3 can play. Up/Down moves between
+   them, Enter toggles a racer or (on "Play") locks in the roster and
+   begins.
+4. Before every single turn - including the very first - a "so-and-so's
+   turn" screen pauses the game so you can pass the keyboard to whoever's
+   up next. Press Enter (or click) when that player is ready to go.
+5. Then the chosen first racer takes their turn from a random spot in
+   the forest.
    Controls:
      Arrow keys - move
      I          - attack! Mark throws a golden fist, Cam shoots fire,
@@ -53,11 +60,12 @@ When you run this:
    the forest and you'll strike first, sending it flying and winning
    the fight before a battle even starts.
      Enter   - confirm the attack
-   Reach the finish and it becomes the next living character's turn,
-   with a brand new random start and finish. Run out of health and
-   that character is knocked out for good this game - whoever's left
-   keeps playing until they're also knocked out, at which point you'll
-   see the Game Over screen.
+   Reach the finish and, after a ready-check for whoever's up next, it
+   becomes the next living character's turn, with a brand new random
+   start and finish. Run out of health and that character is knocked
+   out for good this game - whoever's left keeps playing until they're
+   also knocked out, at which point you'll see the Game Over screen
+   (Restart keeps the same roster you picked, with a fresh ready-check).
 """
 
 import os
@@ -87,6 +95,8 @@ TITLE_TEXT = "Wondernight"
 # ---- Game states ----
 STATE_INTRO = "intro"
 STATE_MENU = "menu"
+STATE_CHARACTER_SELECT = "character_select"
+STATE_READY = "ready"
 STATE_OVERWORLD = "overworld"
 STATE_BATTLE = "battle"
 STATE_FINISH = "finish"
@@ -232,12 +242,13 @@ def hp_percent(current, maximum):
     return max(0, round(100 * max(0, current) / maximum))
 
 
-def pick_next_active(current, alive):
-    """Round-robin to whichever racer is next in line and still alive.
-    If everyone else is out, the current player keeps going."""
-    idx = CHARACTER_ORDER.index(current)
-    for step in range(1, len(CHARACTER_ORDER) + 1):
-        candidate = CHARACTER_ORDER[(idx + step) % len(CHARACTER_ORDER)]
+def pick_next_active(current, alive, roster):
+    """Round-robin to whichever racer is next in line within the chosen
+    roster and still alive. If everyone else is out, the current player
+    keeps going."""
+    idx = roster.index(current)
+    for step in range(1, len(roster) + 1):
+        candidate = roster[(idx + step) % len(roster)]
         if candidate == current:
             return current
         if alive[candidate]:
@@ -513,6 +524,11 @@ def main():
     selected_index = 0  # which menu option is currently highlighted
     game_over_selected = 0
 
+    # ---- character select state (which racers are in this game) ----
+    roster = CHARACTER_ORDER[:]  # who's actually playing - set for real once Play is confirmed
+    char_selected = {c: True for c in CHARACTER_ORDER}
+    char_select_cursor = 0  # 0..len(CHARACTER_ORDER)-1 = a racer row, last index = Play
+
     # ---- turn-based race state (one dict entry per playable character) ----
     active = "mark"  # whoever's turn it is
     pos = {c: (0, 0) for c in CHARACTER_ORDER}
@@ -571,7 +587,7 @@ def main():
 
         if current_run_enemy_count >= MAX_ENEMY_COUNT:
             capped_run_participants.add(character)
-            still_alive = {c for c in CHARACTER_ORDER if alive[c]}
+            still_alive = {c for c in roster if alive[c]}
             if still_alive and still_alive.issubset(capped_run_participants):
                 speed_round += 1
                 capped_run_participants.clear()
@@ -579,7 +595,7 @@ def main():
     def full_reset():
         """Wipe the board for a brand new game - used at startup and on Restart."""
         nonlocal active, speed_round, knockback_effect
-        for c in CHARACTER_ORDER:
+        for c in roster:
             scores[c] = 0
             wins[c] = 0
             alive[c] = True
@@ -587,9 +603,9 @@ def main():
         capped_run_participants.clear()
         speed_round = 0
         knockback_effect = None
-        active = CHARACTER_ORDER[0]
+        active = roster[0]
         start_turn_for(active)
-        for c in CHARACTER_ORDER:
+        for c in roster:
             if c != active:
                 pos[c] = current_start
                 hp[c] = BASE_MAX_HP[c]
@@ -612,9 +628,27 @@ def main():
                         selected_index = (selected_index + 1) % len(menu_options)
                     if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                         if menu_options[selected_index] == "Start":
-                            state = STATE_OVERWORLD
+                            state = STATE_CHARACTER_SELECT
                         elif menu_options[selected_index] == "Quit":
                             running = False
+
+                elif state == STATE_CHARACTER_SELECT:
+                    num_rows = len(CHARACTER_ORDER) + 1  # racers + Play
+                    if event.key in (pygame.K_UP, pygame.K_DOWN):
+                        step = -1 if event.key == pygame.K_UP else 1
+                        char_select_cursor = (char_select_cursor + step) % num_rows
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        if char_select_cursor < len(CHARACTER_ORDER):
+                            picked = CHARACTER_ORDER[char_select_cursor]
+                            char_selected[picked] = not char_selected[picked]
+                        elif any(char_selected.values()):
+                            roster = [c for c in CHARACTER_ORDER if char_selected[c]]
+                            full_reset()
+                            state = STATE_READY
+
+                elif state == STATE_READY:
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        state = STATE_OVERWORLD
 
                 elif state == STATE_OVERWORLD:
                     if event.key == pygame.K_d:
@@ -717,7 +751,7 @@ def main():
                                 if fighter_hp_after <= 0:
                                     battle_phase = "defeat"
                                     pending_game_over = not any(
-                                        alive[c] for c in CHARACTER_ORDER if c != battle_fighter
+                                        alive[c] for c in roster if c != battle_fighter
                                     )
 
                     elif battle_phase == "victory":
@@ -731,19 +765,19 @@ def main():
                         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                             alive[active] = False
                             battle_enemy_ref = None
-                            if not any(alive.values()):
+                            if not any(alive[c] for c in roster):
                                 state = STATE_GAME_OVER
                                 game_over_selected = 0
                             else:
-                                active = pick_next_active(active, alive)
+                                active = pick_next_active(active, alive, roster)
                                 start_turn_for(active)
-                                state = STATE_OVERWORLD
+                                state = STATE_READY
 
                 elif state == STATE_FINISH:
                     if event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                        active = pick_next_active(active, alive)
+                        active = pick_next_active(active, alive, roster)
                         start_turn_for(active)
-                        state = STATE_OVERWORLD
+                        state = STATE_READY
 
                 elif state == STATE_GAME_OVER:
                     if event.key in (pygame.K_UP, pygame.K_DOWN):
@@ -751,7 +785,7 @@ def main():
                     if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                         if GAME_OVER_OPTIONS[game_over_selected] == "Restart":
                             full_reset()
-                            state = STATE_OVERWORLD
+                            state = STATE_READY
                         elif GAME_OVER_OPTIONS[game_over_selected] == "Quit":
                             running = False
 
@@ -762,9 +796,23 @@ def main():
                         if rect.collidepoint(mouse_pos):
                             selected_index = i
                             if menu_options[i] == "Start":
-                                state = STATE_OVERWORLD
+                                state = STATE_CHARACTER_SELECT
                             elif menu_options[i] == "Quit":
                                 running = False
+                elif state == STATE_CHARACTER_SELECT:
+                    mouse_pos = event.pos
+                    for i, rect in enumerate(character_select_rects()):
+                        if rect.collidepoint(mouse_pos):
+                            char_select_cursor = i
+                            if i < len(CHARACTER_ORDER):
+                                picked = CHARACTER_ORDER[i]
+                                char_selected[picked] = not char_selected[picked]
+                            elif any(char_selected.values()):
+                                roster = [c for c in CHARACTER_ORDER if char_selected[c]]
+                                full_reset()
+                                state = STATE_READY
+                elif state == STATE_READY:
+                    state = STATE_OVERWORLD
                 elif state == STATE_GAME_OVER:
                     mouse_pos = event.pos
                     for i, rect in enumerate(menu_rects(GAME_OVER_OPTIONS, battle_font)):
@@ -772,7 +820,7 @@ def main():
                             game_over_selected = i
                             if GAME_OVER_OPTIONS[i] == "Restart":
                                 full_reset()
-                                state = STATE_OVERWORLD
+                                state = STATE_READY
                             elif GAME_OVER_OPTIONS[i] == "Quit":
                                 running = False
 
@@ -843,6 +891,14 @@ def main():
             draw_title(screen, title_font, current_color, HEIGHT // 3)
             draw_menu(screen, menu_font, menu_options, selected_index)
 
+        elif state == STATE_CHARACTER_SELECT:
+            draw_character_select_screen(
+                screen, title_font, menu_font, battle_small_font, char_selected, char_select_cursor,
+            )
+
+        elif state == STATE_READY:
+            draw_ready_screen(screen, title_font, battle_small_font, DISPLAY_NAME[active], NAME_COLOR[active])
+
         elif state == STATE_OVERWORLD:
             active_col, active_row = pos[active]
             active_facing = facing[active]
@@ -868,7 +924,7 @@ def main():
                 if effect is not None:
                     draw_attack_effect_image(screen, effect, active_col, active_row, active_facing, cam_x, cam_y)
 
-            draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds, wins, scores, alive)
+            draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds, wins, scores, alive, roster)
 
         elif state == STATE_BATTLE:
             fighter_name = DISPLAY_NAME[battle_fighter]
@@ -887,16 +943,18 @@ def main():
 
         elif state == STATE_FINISH:
             winner_name = DISPLAY_NAME[active]
-            next_active = pick_next_active(active, alive)
+            next_active = pick_next_active(active, alive, roster)
             next_name = DISPLAY_NAME[next_active]
             next_run_enemy_count = enemy_count_for_run(runs_taken[next_active] + 1)
             draw_finish_screen(
                 screen, battle_font, battle_small_font,
-                winner_name, next_name, wins, scores, next_run_enemy_count,
+                winner_name, next_name, wins, scores, next_run_enemy_count, roster,
             )
 
         elif state == STATE_GAME_OVER:
-            draw_game_over_screen(screen, game_over_font, battle_font, battle_small_font, wins, scores, game_over_selected)
+            draw_game_over_screen(
+                screen, game_over_font, battle_font, battle_small_font, wins, scores, game_over_selected, roster,
+            )
 
         pygame.display.flip()
         clock.tick(60)
@@ -935,7 +993,60 @@ def draw_menu(screen, font, menu_options, selected_index):
         screen.blit(text_surface, text_rect)
 
 
-def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins, scores, alive):
+def character_select_rects():
+    """Compute the click rectangles for the character-select screen's rows:
+    one per playable character, plus a final row for the Play button."""
+    rows = len(CHARACTER_ORDER) + 1
+    spacing = 60
+    start_y = HEIGHT // 2 - spacing * (rows - 1) // 2
+    return [pygame.Rect(0, start_y + i * spacing - 24, WIDTH, 48) for i in range(rows)]
+
+
+def draw_character_select_screen(screen, title_font, option_font, small_font, char_selected, cursor):
+    """Let players check on 1-3 racers (Mark/Cam/Oni) before a game begins."""
+    screen.fill(BACKGROUND_COLOR)
+
+    title = title_font.render("Select Racers", True, WHITE)
+    screen.blit(title, title.get_rect(center=(WIDTH // 2, 90)))
+
+    subtitle = small_font.render(
+        "Up/Down to move, Enter to toggle a racer or confirm Play", True, (180, 180, 180),
+    )
+    screen.blit(subtitle, subtitle.get_rect(center=(WIDTH // 2, 140)))
+
+    rects = character_select_rects()
+    for i, character in enumerate(CHARACTER_ORDER):
+        checkbox = "[X]" if char_selected[character] else "[ ]"
+        color = YELLOW if i == cursor else NAME_COLOR[character]
+        marker = "> " if i == cursor else "   "
+        label = option_font.render(f"{marker}{checkbox} {DISPLAY_NAME[character]}", True, color)
+        screen.blit(label, label.get_rect(center=rects[i].center))
+
+    play_index = len(CHARACTER_ORDER)
+    play_color = YELLOW if cursor == play_index else WHITE
+    play_marker = "> " if cursor == play_index else "   "
+    play_label = option_font.render(f"{play_marker}Play", True, play_color)
+    screen.blit(play_label, play_label.get_rect(center=rects[play_index].center))
+
+    if not any(char_selected.values()):
+        warning = small_font.render("Select at least one racer!", True, DANGER_RED)
+        screen.blit(warning, warning.get_rect(center=(WIDTH // 2, HEIGHT - 40)))
+
+
+def draw_ready_screen(screen, title_font, small_font, character_name, character_color):
+    """A quick 'pass the keyboard' pause shown before every player's turn."""
+    screen.fill(BACKGROUND_COLOR)
+
+    msg = title_font.render(f"{character_name}'s turn", True, character_color)
+    screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 30)))
+
+    hint = small_font.render(
+        "Pass the keyboard, then press Enter (or click) when ready", True, WHITE,
+    )
+    screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 30)))
+
+
+def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins, scores, alive, roster):
     hud_rect = pygame.Rect(0, HEIGHT - HUD_HEIGHT, WIDTH, HUD_HEIGHT)
     pygame.draw.rect(screen, BACKGROUND_COLOR, hud_rect)
 
@@ -947,9 +1058,9 @@ def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins, scores, a
     else:
         who = DISPLAY_NAME[active]
         dragon_note = " (dragon!)" if dragon_mode else ""
-        eliminated = [DISPLAY_NAME[c] for c in CHARACTER_ORDER if c != active and not alive[c]]
+        eliminated = [DISPLAY_NAME[c] for c in roster if c != active and not alive[c]]
         solo_note = f" ({'/'.join(eliminated)} out!)" if eliminated else ""
-        stats = "  ".join(f"{DISPLAY_NAME[c]} {wins[c]}W/{scores[c]}pt" for c in CHARACTER_ORDER)
+        stats = "  ".join(f"{DISPLAY_NAME[c]} {wins[c]}W/{scores[c]}pt" for c in roster)
         text = font.render(
             f"{who}'s turn{dragon_note}{solo_note}  {stats} | Arrows I:atk D:dragon Esc:quit",
             True, WHITE,
@@ -1044,14 +1155,14 @@ def draw_battle_screen(
         screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 16)))
 
 
-def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, wins, scores, next_run_enemy_count):
+def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, wins, scores, next_run_enemy_count, roster):
     screen.fill(BACKGROUND_COLOR)
 
     msg = big_font.render(f"{winner_name} made it to the finish! +{SCORE_PER_WIN} points", True, HP_GREEN)
     screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 56)))
 
     tally = small_font.render(
-        "   ".join(f"{DISPLAY_NAME[c]} - Wins: {wins[c]} Score: {scores[c]}" for c in CHARACTER_ORDER),
+        "   ".join(f"{DISPLAY_NAME[c]} - Wins: {wins[c]} Score: {scores[c]}" for c in roster),
         True, WHITE,
     )
     screen.blit(tally, tally.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 10)))
@@ -1065,7 +1176,7 @@ def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, win
     screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 58)))
 
 
-def draw_game_over_screen(screen, title_font, option_font, small_font, wins, scores, selected_index):
+def draw_game_over_screen(screen, title_font, option_font, small_font, wins, scores, selected_index, roster):
     screen.fill(BACKGROUND_COLOR)
 
     title = title_font.render("GAME OVER", True, DANGER_RED)
@@ -1075,7 +1186,7 @@ def draw_game_over_screen(screen, title_font, option_font, small_font, wins, sco
     screen.blit(subtitle, subtitle.get_rect(center=(WIDTH // 2, 140)))
 
     line_y = 190
-    for c in CHARACTER_ORDER:
+    for c in roster:
         line = small_font.render(
             f"{DISPLAY_NAME[c]}  -  Wins: {wins[c]}   Score: {scores[c]}", True, NAME_COLOR[c],
         )
