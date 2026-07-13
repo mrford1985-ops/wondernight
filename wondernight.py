@@ -44,7 +44,10 @@ When you run this:
    turn" screen pauses the game so you can pass the keyboard to whoever's
    up next. Press Enter (or click) when that player is ready to go.
 5. Then the chosen first racer takes their turn from a random spot in
-   the forest.
+   the forest. Each run has a 10-second grace period - after that, HP
+   starts draining 10% per second until you either reach the finish or
+   run out of time, so don't dawdle! A heads-up at the top of the screen
+   counts down, then warns you once the drain kicks in.
    Controls:
      Arrow keys - move
      I          - attack! Mark throws a golden fist, Cam shoots fire,
@@ -100,6 +103,7 @@ STATE_READY = "ready"
 STATE_OVERWORLD = "overworld"
 STATE_BATTLE = "battle"
 STATE_FINISH = "finish"
+STATE_TIMEOUT = "timeout"
 STATE_GAME_OVER = "game_over"
 
 GAME_OVER_OPTIONS = ["Restart", "Quit"]
@@ -154,6 +158,11 @@ ENEMY_MOVE_INTERVAL_MS = 2000       # how often Dark Knights wander to a new til
 ENEMY_SPEED_STEP_MS = 400          # once capped, they move this much faster every full round
 MIN_ENEMY_MOVE_INTERVAL_MS = 100    # floor so the speed-up can never hit zero/negative
 RESPAWN_DELAY_MS = 30000  # 30 seconds after the last one falls, they all come back
+
+# ---- run timer - race the clock or start losing health ----
+RUN_TIMER_GRACE_MS = 10000   # how long you have before the drain kicks in
+HP_DRAIN_INTERVAL_MS = 1000  # once the grace period ends, drain ticks this often
+HP_DRAIN_PERCENT = 10        # % of max HP lost per drain tick
 
 ATTACK_DURATION_MS = 350
 KNOCKBACK_DURATION_MS = 450  # how long a pre-emptively struck Dark Knight takes to fly off screen
@@ -562,6 +571,12 @@ def main():
     # with the I key, before a full battle ever starts
     knockback_effect = None
 
+    # ---- run timer - resets every time a fresh run begins ----
+    run_elapsed_ms = 0       # how long the active character has been racing this run,
+                              # only ticking while state == STATE_OVERWORLD (paused in battle etc.)
+    drain_ticks_applied = 0  # how many HP_DRAIN_INTERVAL_MS ticks have already been applied
+    last_overworld_now = None
+
     # ---- battle state (only meaningful while state == STATE_BATTLE) ----
     battle_enemy_ref = None     # the actual enemy dict currently being fought
     battle_fighter = "mark"     # who's fighting
@@ -575,6 +590,7 @@ def main():
         fresh run, with a freshly-stocked forest sized for that character's run number."""
         nonlocal current_start, current_finish, dragon_mode, last_move_time
         nonlocal enemies, all_defeated_at, current_run_enemy_count, speed_round
+        nonlocal run_elapsed_ms, drain_ticks_applied, last_overworld_now
         current_start, current_finish = pick_start_and_finish()
         dragon_mode = False
         last_move_time = 0
@@ -584,6 +600,9 @@ def main():
         current_run_enemy_count = enemy_count_for_run(runs_taken[character])
         enemies = random_enemy_positions(current_run_enemy_count, current_start, current_finish)
         all_defeated_at = None
+        run_elapsed_ms = 0
+        drain_ticks_applied = 0
+        last_overworld_now = None
 
         if current_run_enemy_count >= MAX_ENEMY_COUNT:
             capped_run_participants.add(character)
@@ -779,6 +798,16 @@ def main():
                         start_turn_for(active)
                         state = STATE_READY
 
+                elif state == STATE_TIMEOUT:
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        if not any(alive[c] for c in roster):
+                            state = STATE_GAME_OVER
+                            game_over_selected = 0
+                        else:
+                            active = pick_next_active(active, alive, roster)
+                            start_turn_for(active)
+                            state = STATE_READY
+
                 elif state == STATE_GAME_OVER:
                     if event.key in (pygame.K_UP, pygame.K_DOWN):
                         game_over_selected = (game_over_selected + 1) % len(GAME_OVER_OPTIONS)
@@ -813,6 +842,14 @@ def main():
                                 state = STATE_READY
                 elif state == STATE_READY:
                     state = STATE_OVERWORLD
+                elif state == STATE_TIMEOUT:
+                    if not any(alive[c] for c in roster):
+                        state = STATE_GAME_OVER
+                        game_over_selected = 0
+                    else:
+                        active = pick_next_active(active, alive, roster)
+                        start_turn_for(active)
+                        state = STATE_READY
                 elif state == STATE_GAME_OVER:
                     mouse_pos = event.pos
                     for i, rect in enumerate(menu_rects(GAME_OVER_OPTIONS, battle_font)):
@@ -847,6 +884,29 @@ def main():
             for i, rect in enumerate(menu_rects(GAME_OVER_OPTIONS, battle_font)):
                 if rect.collidepoint(mouse_pos):
                     game_over_selected = i
+
+        if state == STATE_OVERWORLD:
+            # the run clock only ticks while actually racing (paused during
+            # battles, ready screens, etc.) - track it via consecutive frame
+            # deltas rather than a fixed start time so pauses don't count
+            if last_overworld_now is not None:
+                run_elapsed_ms += now - last_overworld_now
+            last_overworld_now = now
+
+            # after the grace period, HP drains in fixed ticks - using tick
+            # counts (not wall-clock gaps) keeps this exact even across pauses
+            if run_elapsed_ms > RUN_TIMER_GRACE_MS:
+                ticks_due = (run_elapsed_ms - RUN_TIMER_GRACE_MS) // HP_DRAIN_INTERVAL_MS + 1
+                new_ticks = ticks_due - drain_ticks_applied
+                if new_ticks > 0:
+                    drain_ticks_applied = ticks_due
+                    max_hp = effective_max_hp(active, dragon_mode)
+                    drain_amount = round(max_hp * HP_DRAIN_PERCENT / 100) * new_ticks
+                    hp[active] = max(0, hp[active] - drain_amount)
+                    if hp[active] <= 0:
+                        alive[active] = False
+                        pending_game_over = not any(alive[c] for c in roster if c != active)
+                        state = STATE_TIMEOUT
 
         if state == STATE_OVERWORLD:
             # every Dark Knight wanders to a new tile every couple of seconds
@@ -925,6 +985,7 @@ def main():
                     draw_attack_effect_image(screen, effect, active_col, active_row, active_facing, cam_x, cam_y)
 
             draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds, wins, scores, alive, roster)
+            draw_run_timer(screen, hud_font, run_elapsed_ms)
 
         elif state == STATE_BATTLE:
             fighter_name = DISPLAY_NAME[battle_fighter]
@@ -949,6 +1010,12 @@ def main():
             draw_finish_screen(
                 screen, battle_font, battle_small_font,
                 winner_name, next_name, wins, scores, next_run_enemy_count, roster,
+            )
+
+        elif state == STATE_TIMEOUT:
+            draw_timeout_screen(
+                screen, battle_font, battle_small_font,
+                DISPLAY_NAME[active], wins, scores, pending_game_over, roster,
             )
 
         elif state == STATE_GAME_OVER:
@@ -1044,6 +1111,24 @@ def draw_ready_screen(screen, title_font, small_font, character_name, character_
         "Pass the keyboard, then press Enter (or click) when ready", True, WHITE,
     )
     screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 30)))
+
+
+def draw_run_timer(screen, font, run_elapsed_ms):
+    """Small heads-up indicator warning that the run clock is ticking down
+    to the point where health starts draining. Drawn over a dark backing bar
+    so it stays readable against the busy forest background."""
+    if run_elapsed_ms < RUN_TIMER_GRACE_MS:
+        remaining_seconds = -(-(RUN_TIMER_GRACE_MS - run_elapsed_ms) // 1000)  # ceil
+        text = font.render(f"Hurry! {remaining_seconds}s until HP starts draining", True, YELLOW)
+    else:
+        text = font.render("Losing HP - find the finish!", True, DANGER_RED)
+    text_rect = text.get_rect(center=(WIDTH // 2, 18))
+    backing_rect = text_rect.inflate(20, 10)
+    backing = pygame.Surface(backing_rect.size)
+    backing.set_alpha(180)
+    backing.fill(BACKGROUND_COLOR)
+    screen.blit(backing, backing_rect)
+    screen.blit(text, text_rect)
 
 
 def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins, scores, alive, roster):
@@ -1153,6 +1238,27 @@ def draw_battle_screen(
         else:
             hint = small_font.render("Press Enter - the next racer is up", True, (180, 180, 180))
         screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 16)))
+
+
+def draw_timeout_screen(screen, big_font, small_font, character_name, wins, scores, pending_game_over, roster):
+    screen.fill(BACKGROUND_COLOR)
+
+    msg = big_font.render(f"{character_name} ran out of time!", True, DANGER_RED)
+    screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 56)))
+
+    tally = small_font.render(
+        "   ".join(f"{DISPLAY_NAME[c]} - Wins: {wins[c]} Score: {scores[c]}" for c in roster),
+        True, WHITE,
+    )
+    screen.blit(tally, tally.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 10)))
+
+    if pending_game_over:
+        hint = small_font.render(
+            "That was the last racer standing! Press Enter for the results", True, (180, 180, 180)
+        )
+    else:
+        hint = small_font.render("Press Enter - the next racer is up", True, (180, 180, 180))
+    screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 24)))
 
 
 def draw_finish_screen(screen, big_font, small_font, winner_name, next_name, wins, scores, next_run_enemy_count, roster):
