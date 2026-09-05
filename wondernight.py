@@ -59,10 +59,13 @@ When you run this:
      Arrow keys - move
      I          - attack! Mark throws a golden fist, Cam shoots fire,
                   Oni hurls a dark fireball (just for show)
-     D          - transform! Dragons have more health and take half
-                  damage in fights, but can only move once per second -
-                  extra movement key presses while on cooldown are
-                  ignored.
+     D          - transform into a dragon! W - transform into a whale!
+                  Either way you get more health and take half damage
+                  in fights, but can only move once per second - extra
+                  movement key presses while on cooldown are ignored.
+                  D and W each toggle their own form independently, so
+                  pressing one while you're the other switches forms
+                  directly.
      Esc        - quit any time
    Walking into a Dark Knight (or one wandering into you) starts a
    real battle - there's no running away, so land your attack! You can
@@ -205,6 +208,7 @@ CAM_TARGET_H = 118
 ONI_TARGET_H = 130
 DARK_KNIGHT_TARGET_H = 130
 DRAGON_TARGET_W = 170
+WHALE_TARGET_W = 170       # the whale form - same footprint as the dragon form
 TREE_TARGET_H = 100
 GRASS_TARGET_W = 28  # small ground texture tuft, scattered one per grass tile
 GOLD_FIST_TARGET_H = 65
@@ -250,10 +254,10 @@ def direction_from_delta(d_col, d_row):
     return "down"
 
 
-def effective_max_hp(character, is_dragon):
-    """Dragons carry 50% more health than their human max."""
+def effective_max_hp(character, form):
+    """Dragons and whales both carry 50% more health than the human max."""
     base = BASE_MAX_HP[character]
-    return round(base * DRAGON_HP_MULTIPLIER) if is_dragon else base
+    return round(base * DRAGON_HP_MULTIPLIER) if form != "human" else base
 
 
 def hp_percent(current, maximum):
@@ -488,6 +492,12 @@ def main():
         "cam": load_scaled("red_dragon.png", target_w=DRAGON_TARGET_W),
         "oni": load_scaled("oni_dragon.png", target_w=DRAGON_TARGET_W),
     }
+    whale_images = {
+        "mark": load_scaled("gold_whale.png", target_w=WHALE_TARGET_W),
+        "cam": load_scaled("red_whale.png", target_w=WHALE_TARGET_W),
+        "oni": load_scaled("oni_whale.png", target_w=WHALE_TARGET_W),
+    }
+    images_by_form = {"dragon": dragon_images, "whale": whale_images}
     human_portraits = {
         "mark": load_scaled("mark.png", target_h=BATTLE_PORTRAIT_H),
         "cam": load_scaled("cam.png", target_h=BATTLE_PORTRAIT_H),
@@ -498,6 +508,12 @@ def main():
         "cam": load_scaled("red_dragon.png", target_h=BATTLE_PORTRAIT_H),
         "oni": load_scaled("oni_dragon.png", target_h=BATTLE_PORTRAIT_H),
     }
+    whale_portraits = {
+        "mark": load_scaled("gold_whale.png", target_h=BATTLE_PORTRAIT_H),
+        "cam": load_scaled("red_whale.png", target_h=BATTLE_PORTRAIT_H),
+        "oni": load_scaled("oni_whale.png", target_h=BATTLE_PORTRAIT_H),
+    }
+    portraits_by_form = {"dragon": dragon_portraits, "whale": whale_portraits}
     dark_knight_image = load_scaled("dark_knight.png", target_h=DARK_KNIGHT_TARGET_H)
     princess_image = load_scaled("princess.png", target_h=PRINCESS_TARGET_H)
     tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
@@ -561,7 +577,7 @@ def main():
     alive = {c: True for c in CHARACTER_ORDER}
     pending_game_over = False
 
-    dragon_mode = False  # press D to toggle - dragons are tougher but slower
+    active_form = "human"  # press D for dragon, W for whale - both tougher but slower
     last_move_time = 0
 
     # ---- shared map state - re-randomized every time a fresh run begins ----
@@ -605,12 +621,12 @@ def main():
     def start_turn_for(character):
         """Send a character to a brand new random start, fully healed and human, for a
         fresh run, with a freshly-stocked forest sized for that character's run number."""
-        nonlocal current_start, current_finish, dragon_mode, last_move_time
+        nonlocal current_start, current_finish, active_form, last_move_time
         nonlocal enemies, all_defeated_at, current_run_enemy_count, speed_round
         nonlocal run_elapsed_ms, drain_ticks_applied, last_overworld_now
         nonlocal princess_trail, princess_trail_index, princess_shield_ready
         current_start, current_finish = pick_start_and_finish()
-        dragon_mode = False
+        active_form = "human"
         last_move_time = 0
         pos[character] = current_start
         hp[character] = BASE_MAX_HP[character]
@@ -692,9 +708,15 @@ def main():
 
                 elif state == STATE_OVERWORLD:
                     if event.key == pygame.K_d:
-                        old_max = effective_max_hp(active, dragon_mode)
-                        dragon_mode = not dragon_mode
-                        new_max = effective_max_hp(active, dragon_mode)
+                        old_max = effective_max_hp(active, active_form)
+                        active_form = "human" if active_form == "dragon" else "dragon"
+                        new_max = effective_max_hp(active, active_form)
+                        hp[active] = max(1, min(new_max, round(hp[active] * new_max / old_max)))
+
+                    elif event.key == pygame.K_w:
+                        old_max = effective_max_hp(active, active_form)
+                        active_form = "human" if active_form == "whale" else "whale"
+                        new_max = effective_max_hp(active, active_form)
                         hp[active] = max(1, min(new_max, round(hp[active] * new_max / old_max)))
 
                     elif event.key == pygame.K_i:
@@ -733,7 +755,7 @@ def main():
 
                         if d_col or d_row:
                             move_check_time = pygame.time.get_ticks()
-                            move_cooldown = DRAGON_MOVE_COOLDOWN_MS if dragon_mode else BASE_MOVE_COOLDOWN_MS
+                            move_cooldown = DRAGON_MOVE_COOLDOWN_MS if active_form != "human" else BASE_MOVE_COOLDOWN_MS
                             if move_check_time - last_move_time >= move_cooldown:
                                 last_move_time = move_check_time
 
@@ -792,8 +814,8 @@ def main():
                                 battle_log.append("The princess steps in and blocks the blow!")
                             else:
                                 enemy_dmg = random.randint(*ENEMY_ATK_RANGE)
-                                if dragon_mode:
-                                    # dragons take half damage in combat
+                                if active_form != "human":
+                                    # dragons and whales both take half damage in combat
                                     enemy_dmg = max(1, round(enemy_dmg * DRAGON_DAMAGE_TAKEN_MULTIPLIER))
                                 hp[battle_fighter] = max(0, hp[battle_fighter] - enemy_dmg)
                                 fighter_hp_after = hp[battle_fighter]
@@ -933,7 +955,7 @@ def main():
                 new_ticks = ticks_due - drain_ticks_applied
                 if new_ticks > 0:
                     drain_ticks_applied = ticks_due
-                    max_hp = effective_max_hp(active, dragon_mode)
+                    max_hp = effective_max_hp(active, active_form)
                     drain_amount = round(max_hp * HP_DRAIN_PERCENT / 100) * new_ticks
                     hp[active] = max(0, hp[active] - drain_amount)
                     if hp[active] <= 0:
@@ -1013,7 +1035,7 @@ def main():
 
             draw_active_marker(screen, active_col, active_row, cam_x, cam_y)
 
-            char_image = dragon_images[active] if dragon_mode else human_images[active]
+            char_image = images_by_form[active_form][active] if active_form != "human" else human_images[active]
             draw_image_character(screen, char_image, active_col, active_row, cam_x, cam_y)
 
             if now < attack_until[active]:
@@ -1021,16 +1043,16 @@ def main():
                 if effect is not None:
                     draw_attack_effect_image(screen, effect, active_col, active_row, active_facing, cam_x, cam_y)
 
-            draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds, wins, scores, alive, roster)
+            draw_hud(screen, hud_font, active, active_form, respawn_seconds, wins, scores, alive, roster)
             draw_run_timer(screen, hud_font, run_elapsed_ms)
             draw_shield_status(screen, hud_font, princess_shield_ready)
 
         elif state == STATE_BATTLE:
             fighter_name = DISPLAY_NAME[battle_fighter]
             fighter_hp = hp[battle_fighter]
-            fighter_max_hp = effective_max_hp(battle_fighter, dragon_mode)
+            fighter_max_hp = effective_max_hp(battle_fighter, active_form)
             fighter_image = (
-                dragon_portraits[battle_fighter] if dragon_mode else human_portraits[battle_fighter]
+                portraits_by_form[active_form][battle_fighter] if active_form != "human" else human_portraits[battle_fighter]
             )
 
             draw_battle_screen(
@@ -1184,7 +1206,7 @@ def draw_shield_status(screen, font, shield_ready):
     screen.blit(text, text_rect)
 
 
-def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins, scores, alive, roster):
+def draw_hud(screen, font, active, active_form, respawn_seconds, wins, scores, alive, roster):
     hud_rect = pygame.Rect(0, HEIGHT - HUD_HEIGHT, WIDTH, HUD_HEIGHT)
     pygame.draw.rect(screen, BACKGROUND_COLOR, hud_rect)
 
@@ -1195,12 +1217,12 @@ def draw_hud(screen, font, active, dragon_mode, respawn_seconds, wins, scores, a
         )
     else:
         who = DISPLAY_NAME[active]
-        dragon_note = " (dragon!)" if dragon_mode else ""
+        dragon_note = f" ({active_form}!)" if active_form != "human" else ""
         eliminated = [DISPLAY_NAME[c] for c in roster if c != active and not alive[c]]
         solo_note = f" ({'/'.join(eliminated)} out!)" if eliminated else ""
         stats = "  ".join(f"{DISPLAY_NAME[c]} {wins[c]}W/{scores[c]}pt" for c in roster)
         text = font.render(
-            f"{who}'s turn{dragon_note}{solo_note}  {stats} | Arrows I:atk D:dragon Esc:quit",
+            f"{who}'s turn{dragon_note}{solo_note}  {stats} | Arrows I:atk D/W:form Esc:quit",
             True, WHITE,
         )
     text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT - HUD_HEIGHT // 2))
