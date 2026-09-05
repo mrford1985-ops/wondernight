@@ -268,13 +268,26 @@ sun.color = color.rgba32(255, 250, 235, 255)
 ambient = AmbientLight(color=color.rgba32(120, 120, 140, 255))
 
 # ---- Camera rig: elevated chase camera that follows the active racer ----
-CAMERA_OFFSET = Vec3(0, 9, -7)
-camera.rotation_x = 45
+CHASE_DISTANCE = 6.5   # how far behind the character the camera sits
+CHASE_HEIGHT = 5.5     # how high above the ground the camera sits
+LOOK_HEIGHT = 1.2      # look at a point this high above the character's feet
 camera.fov = 70
 
+FACING_TO_WORLD_DIR = {
+    "up": Vec3(0, 0, -1),
+    "down": Vec3(0, 0, 1),
+    "left": Vec3(-1, 0, 0),
+    "right": Vec3(1, 0, 0),
+}
 
-def update_camera(target_pos):
-    camera.position = target_pos + CAMERA_OFFSET
+
+def update_camera(target_pos, facing_dir="down"):
+    """Third-person chase camera: sits behind the character (opposite
+    their facing direction) and looks at them, swinging around as they
+    turn so it's always 'behind you'."""
+    direction = FACING_TO_WORLD_DIR.get(facing_dir, Vec3(0, 0, 1))
+    camera.position = target_pos - direction * CHASE_DISTANCE + Vec3(0, CHASE_HEIGHT, 0)
+    camera.look_at(target_pos + Vec3(0, LOOK_HEIGHT, 0))
 
 # =====================================================================
 # ---- Character / enemy / princess 3D rigs ----
@@ -703,9 +716,7 @@ def set_state(new_state):
     state = new_state
     set_world_visible(new_state == STATE_OVERWORLD or new_state == STATE_READY)
     if new_state in (STATE_OVERWORLD, STATE_READY):
-        camera.rotation_x = 45
-        camera.rotation_y = 0
-        update_camera(player_rig["root"].position)
+        update_camera(player_rig["root"].position, facing[active])
     if new_state == STATE_MENU:
         show_menu_screen()
     elif new_state == STATE_CHARACTER_SELECT:
@@ -954,7 +965,7 @@ def game_update(dt):
         return
 
     # ---- camera follow ----
-    update_camera(player_rig["root"].position)
+    update_camera(player_rig["root"].position, facing[active])
 
     # ---- princess follow visual ----
     idx = max(0, len(princess_trail) - 1 - princess_trail_index)
