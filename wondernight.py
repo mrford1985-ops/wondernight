@@ -156,7 +156,6 @@ GRASS_COLOR = (34, 120, 34)
 GRASS_COLOR_ALT = (30, 108, 30)
 WATER_COLOR = (28, 90, 170)          # ground tiles turn to water while a racer is a whale
 WATER_COLOR_ALT = (24, 80, 155)
-WATER_RIPPLE_COLOR = (140, 200, 240)
 START_COLOR = (70, 190, 90)
 FINISH_COLOR = (210, 180, 60)
 
@@ -215,6 +214,7 @@ DRAGON_TARGET_W = 170
 WHALE_TARGET_W = 170       # the whale form - same footprint as the dragon form
 TREE_TARGET_H = 100
 GRASS_TARGET_W = 28  # small ground texture tuft, scattered one per grass tile
+WATER_TARGET_W = 30  # small water-splash tuft, scattered one per water tile
 GOLD_FIST_TARGET_H = 65
 FIRE_TARGET_W = 65
 ONI_FIREBALL_TARGET_W = 70
@@ -441,16 +441,7 @@ def draw_marker_tile(screen, x, y, color, letter, flag_color, font):
     screen.blit(letter_surface, letter_surface.get_rect(center=(pole_x + 14, y + 20)))
 
 
-def draw_water_ripple(screen, x, y):
-    """A couple of small procedural ripple arcs standing in for a grass tuft
-    on a water tile - no extra art asset needed."""
-    ripple_rect_1 = pygame.Rect(x + TILE_SIZE // 4, y + TILE_SIZE // 2, TILE_SIZE // 2, TILE_SIZE // 4)
-    pygame.draw.arc(screen, WATER_RIPPLE_COLOR, ripple_rect_1, 3.4, 6.0, 2)
-    ripple_rect_2 = pygame.Rect(x + TILE_SIZE // 6, y + TILE_SIZE * 2 // 3, TILE_SIZE * 2 // 3, TILE_SIZE // 4)
-    pygame.draw.arc(screen, WATER_RIPPLE_COLOR, ripple_rect_2, 3.4, 6.0, 2)
-
-
-def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y, start, finish, is_water=False):
+def draw_forest(screen, tree_image, grass_image, water_image, marker_font, cam_x, cam_y, start, finish, is_water=False):
     col_start = max(0, cam_x // TILE_SIZE)
     col_end = min(MAP_COLS, (cam_x + VIEWPORT_WIDTH) // TILE_SIZE + 2)
     row_start = max(0, cam_y // TILE_SIZE)
@@ -479,7 +470,8 @@ def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y, star
                 tw, th = tree_image.get_size()
                 screen.blit(tree_image, (x + (TILE_SIZE - tw) // 2, y + TILE_SIZE - th))
             elif is_water:
-                draw_water_ripple(screen, x, y)
+                ww, wh = water_image.get_size()
+                screen.blit(water_image, (x + (TILE_SIZE - ww) // 2, y + (TILE_SIZE - wh) // 2))
             else:
                 gw, gh = grass_image.get_size()
                 screen.blit(grass_image, (x + (TILE_SIZE - gw) // 2, y + TILE_SIZE - gh))
@@ -536,6 +528,7 @@ def main():
     princess_image = load_scaled("princess.png", target_h=PRINCESS_TARGET_H)
     tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
     grass_image = load_scaled("grass.png", target_w=GRASS_TARGET_W)
+    water_image = load_scaled("water.png", target_w=WATER_TARGET_W)
     gold_fist_up = load_scaled("gold_fist.png", target_h=GOLD_FIST_TARGET_H)
     fire_right = load_scaled("fire.png", target_w=FIRE_TARGET_W)
     oni_fireball_right = load_scaled("oni_fireball.png", target_w=ONI_FIREBALL_TARGET_W)
@@ -1038,7 +1031,7 @@ def main():
             cam_x, cam_y = compute_camera(active_col, active_row)
 
             draw_forest(
-                screen, tree_image, grass_image, marker_font, cam_x, cam_y,
+                screen, tree_image, grass_image, water_image, marker_font, cam_x, cam_y,
                 current_start, current_finish, is_water=active_form == "whale",
             )
 
