@@ -27,7 +27,14 @@ up points). Once EVERY character has been knocked out, it's game over
 - a screen shows everyone's final wins and scores, with the option to
 restart or quit.
 
-Mark, Cam, Oni, the Dark Knight, the dragons, the golden fist, the fire,
+A princess companion trails one tile behind whoever's racing. As long
+as she's kept up, she'll block the very next hit a Dark Knight would
+land in battle - taking it for you completely free. Once she's used
+that block she needs a few of your steps to catch back up before she
+can do it again; a "Princess Shield" note in the top-left of the
+screen shows whether she's ready.
+
+Mark, Cam, Oni, the princess, the Dark Knight, the dragons, the golden fist, the fire,
 the dark fireball, and the tree are all real hand-drawn art (from the
 assets/ folder). Only the ground tiles are still simple flat colors.
 
@@ -205,6 +212,10 @@ FIRE_TARGET_W = 65
 ONI_FIREBALL_TARGET_W = 70
 BATTLE_PORTRAIT_H = 140       # bigger version of each racer/dragon for the battle screen
 DARK_KNIGHT_BATTLE_H = 170    # bigger version of the Dark Knight for the battle screen
+PRINCESS_TARGET_H = 100       # the princess companion - a bit smaller than the racers
+
+# ---- princess companion - follows the active racer and can shield one hit ----
+SHIELD_CATCHUP_DISTANCE = 4  # how many of the racer's moves it takes her to catch back up
 
 
 def load_scaled(filename, target_h=None, target_w=None):
@@ -488,6 +499,7 @@ def main():
         "oni": load_scaled("oni_dragon.png", target_h=BATTLE_PORTRAIT_H),
     }
     dark_knight_image = load_scaled("dark_knight.png", target_h=DARK_KNIGHT_TARGET_H)
+    princess_image = load_scaled("princess.png", target_h=PRINCESS_TARGET_H)
     tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
     grass_image = load_scaled("grass.png", target_w=GRASS_TARGET_W)
     gold_fist_up = load_scaled("gold_fist.png", target_h=GOLD_FIST_TARGET_H)
@@ -577,6 +589,11 @@ def main():
     drain_ticks_applied = 0  # how many HP_DRAIN_INTERVAL_MS ticks have already been applied
     last_overworld_now = None
 
+    # ---- princess companion - trails the active racer and can block one hit ----
+    princess_trail = [(0, 0)]     # every tile the active racer has stepped on this run, in order
+    princess_trail_index = 1      # how many of those steps back she's currently sitting (1 = right behind)
+    princess_shield_ready = True  # can she block the next hit in battle?
+
     # ---- battle state (only meaningful while state == STATE_BATTLE) ----
     battle_enemy_ref = None     # the actual enemy dict currently being fought
     battle_fighter = "mark"     # who's fighting
@@ -591,6 +608,7 @@ def main():
         nonlocal current_start, current_finish, dragon_mode, last_move_time
         nonlocal enemies, all_defeated_at, current_run_enemy_count, speed_round
         nonlocal run_elapsed_ms, drain_ticks_applied, last_overworld_now
+        nonlocal princess_trail, princess_trail_index, princess_shield_ready
         current_start, current_finish = pick_start_and_finish()
         dragon_mode = False
         last_move_time = 0
@@ -603,6 +621,9 @@ def main():
         run_elapsed_ms = 0
         drain_ticks_applied = 0
         last_overworld_now = None
+        princess_trail = [current_start]
+        princess_trail_index = 1
+        princess_shield_ready = True
 
         if current_run_enemy_count >= MAX_ENEMY_COUNT:
             capped_run_participants.add(character)
@@ -739,6 +760,14 @@ def main():
                                 elif is_walkable(new_col, new_row):
                                     pos[active] = (new_col, new_row)
 
+                                    princess_trail.append((new_col, new_row))
+                                    if len(princess_trail) > 20:
+                                        princess_trail = princess_trail[-20:]
+                                    if princess_trail_index > 1:
+                                        princess_trail_index -= 1
+                                        if princess_trail_index <= 1:
+                                            princess_shield_ready = True
+
                                     if (new_col, new_row) == current_finish:
                                         wins[active] += 1
                                         scores[active] += SCORE_PER_WIN
@@ -757,6 +786,10 @@ def main():
                                 battle_enemy_hp = 0
                                 battle_phase = "victory"
                                 scores[battle_fighter] += SCORE_PER_KILL
+                            elif princess_shield_ready:
+                                princess_shield_ready = False
+                                princess_trail_index = SHIELD_CATCHUP_DISTANCE
+                                battle_log.append("The princess steps in and blocks the blow!")
                             else:
                                 enemy_dmg = random.randint(*ENEMY_ATK_RANGE)
                                 if dragon_mode:
@@ -969,6 +1002,10 @@ def main():
             for enemy in enemies:
                 draw_image_character(screen, dark_knight_image, enemy["col"], enemy["row"], cam_x, cam_y)
 
+            princess_idx = max(0, len(princess_trail) - 1 - princess_trail_index)
+            princess_col, princess_row = princess_trail[princess_idx]
+            draw_image_character(screen, princess_image, princess_col, princess_row, cam_x, cam_y)
+
             if knockback_effect is not None:
                 draw_knockback_effect(screen, dark_knight_image, knockback_effect, cam_x, cam_y, now)
                 if now - knockback_effect["start_time"] >= KNOCKBACK_DURATION_MS:
@@ -986,6 +1023,7 @@ def main():
 
             draw_hud(screen, hud_font, active, dragon_mode, respawn_seconds, wins, scores, alive, roster)
             draw_run_timer(screen, hud_font, run_elapsed_ms)
+            draw_shield_status(screen, hud_font, princess_shield_ready)
 
         elif state == STATE_BATTLE:
             fighter_name = DISPLAY_NAME[battle_fighter]
@@ -1124,6 +1162,21 @@ def draw_run_timer(screen, font, run_elapsed_ms):
         text = font.render("Losing HP - find the finish!", True, DANGER_RED)
     text_rect = text.get_rect(center=(WIDTH // 2, 18))
     backing_rect = text_rect.inflate(20, 10)
+    backing = pygame.Surface(backing_rect.size)
+    backing.set_alpha(180)
+    backing.fill(BACKGROUND_COLOR)
+    screen.blit(backing, backing_rect)
+    screen.blit(text, text_rect)
+
+
+def draw_shield_status(screen, font, shield_ready):
+    """Small top-left indicator for whether the princess can currently block a hit."""
+    if shield_ready:
+        text = font.render("Princess Shield: Ready", True, YELLOW)
+    else:
+        text = font.render("Princess Shield: Recharging", True, (150, 150, 150))
+    text_rect = text.get_rect(topleft=(10, 6))
+    backing_rect = text_rect.inflate(12, 8)
     backing = pygame.Surface(backing_rect.size)
     backing.set_alpha(180)
     backing.fill(BACKGROUND_COLOR)
