@@ -63,13 +63,16 @@ ASSET3D_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "asset
 _texture3d_cache = {}
 
 def asset3d(name):
-    """Load a texture from assets3d/ by filename, bypassing Ursina's normal
-    asset-folder search (our textures live outside it)."""
+    """Load a texture from assets3d/ by filename. Builds a Texture directly
+    from the full path (rather than Ursina's load_texture folder-search,
+    whose keyword args vary across Ursina/Panda3D versions)."""
     if name not in _texture3d_cache:
-        tex = load_texture(name, path=ASSET3D_DIR)
-        if tex is None:
-            print_warning(f"3D asset missing: {name}")
-        _texture3d_cache[name] = tex
+        full_path = _os.path.join(ASSET3D_DIR, name)
+        if not _os.path.exists(full_path):
+            print_warning(f"3D asset missing: {full_path}")
+            _texture3d_cache[name] = None
+        else:
+            _texture3d_cache[name] = Texture(full_path)
     return _texture3d_cache[name]
 
 TEXTURE_BY_FORM = {
