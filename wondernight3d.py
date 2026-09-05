@@ -847,6 +847,9 @@ def handle_key(key):
                 facing[active] = direction_from_delta(d_col, d_row)
                 cur_col, cur_row = pos[active]
                 new_col, new_row = cur_col + d_col, cur_row + d_row
+                # update the camera immediately on every move/turn, rather than
+                # waiting for the next per-frame update() tick
+                update_camera(player_rig["root"].position, facing[active])
 
                 blocker = enemy_at(new_col, new_row)
                 if blocker is not None:
@@ -859,6 +862,7 @@ def handle_key(key):
                 elif is_walkable(new_col, new_row, ignore_trees=active_form in FORM_IGNORES_TREES):
                     pos[active] = (new_col, new_row)
                     player_rig["root"].position = grid_to_world(new_col, new_row)
+                    update_camera(player_rig["root"].position, facing[active])
 
                     princess_trail.append((new_col, new_row))
                     if len(princess_trail) > 20:
