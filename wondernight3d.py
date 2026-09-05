@@ -557,13 +557,42 @@ def enter_battle_arena():
     camera.rotation_y = 0
 
 
+def _menu_click(option):
+    if option == "Start":
+        set_state(STATE_CHARACTER_SELECT)
+    else:
+        application.quit()
+
+
 def show_menu_screen():
     clear_ui()
     ui_text("WONDERNIGHT 3D", (0, 0.25), scale=3, origin=(0, 0))
     for i, opt in enumerate(menu_options):
         prefix = "> " if i == menu_selected_index else "  "
-        ui_text(prefix + opt, (0, 0.05 - i * 0.08), scale=2, origin=(0, 0),
-                color_=color.yellow if i == menu_selected_index else color.white)
+        btn = Button(
+            text=prefix + opt, position=(0, 0.05 - i * 0.08), scale=(0.3, 0.06),
+            color=color.rgb32(30, 30, 45) if i != menu_selected_index else color.rgb32(60, 55, 20),
+            text_color=color.yellow if i == menu_selected_index else color.white,
+            highlight_color=color.rgb32(70, 65, 30),
+        )
+        btn.on_click = lambda opt=opt: _menu_click(opt)
+        ui_entities.append(btn)
+
+
+def _toggle_character_click(c):
+    global char_select_cursor
+    char_select_cursor = CHARACTER_ORDER.index(c)
+    char_selected[c] = not char_selected[c]
+    show_character_select_screen()
+
+
+def _play_click():
+    global roster
+    if not any(char_selected.values()):
+        return
+    roster = [c for c in CHARACTER_ORDER if char_selected[c]]
+    full_reset()
+    set_state(STATE_READY)
 
 
 def show_character_select_screen():
@@ -573,18 +602,33 @@ def show_character_select_screen():
     for i, c in enumerate(CHARACTER_ORDER):
         mark_str = "[x] " if char_selected[c] else "[ ] "
         prefix = "> " if char_select_cursor == i else "  "
-        ui_text(prefix + mark_str + DISPLAY_NAME[c], (0, 0.1 - i * 0.09), scale=1.8, origin=(0, 0),
-                color_=color.yellow if char_select_cursor == i else color.white)
+        btn = Button(
+            text=prefix + mark_str + DISPLAY_NAME[c], position=(0, 0.1 - i * 0.09), scale=(0.34, 0.07),
+            color=color.rgb32(30, 30, 45) if char_select_cursor != i else color.rgb32(60, 55, 20),
+            text_color=color.yellow if char_select_cursor == i else color.white,
+            highlight_color=color.rgb32(70, 65, 30),
+        )
+        btn.on_click = lambda c=c: _toggle_character_click(c)
+        ui_entities.append(btn)
     play_i = len(CHARACTER_ORDER)
     prefix = "> " if char_select_cursor == play_i else "  "
-    ui_text(prefix + "Play", (0, 0.1 - play_i * 0.09), scale=1.8, origin=(0, 0),
-            color_=color.lime if char_select_cursor == play_i else color.white)
+    play_btn = Button(
+        text=prefix + "Play", position=(0, 0.1 - play_i * 0.09), scale=(0.34, 0.07),
+        color=color.rgb32(30, 30, 45) if char_select_cursor != play_i else color.rgb32(60, 55, 20),
+        text_color=color.lime if char_select_cursor == play_i else color.white,
+        highlight_color=color.rgb32(40, 70, 40),
+    )
+    play_btn.on_click = _play_click
+    ui_entities.append(play_btn)
 
 
 def show_ready_screen():
     clear_ui()
     ui_text(f"{DISPLAY_NAME[active]}'s turn", (0, 0.15), scale=2.5, origin=(0, 0))
-    ui_text("Press Enter when ready", (0, 0), scale=1.4, origin=(0, 0))
+    btn = Button(text="Click or press Enter when ready", position=(0, 0), scale=(0.5, 0.08),
+                 color=color.rgb32(30, 30, 45), text_color=color.white, highlight_color=color.rgb32(50, 50, 70))
+    btn.on_click = lambda: set_state(STATE_OVERWORLD)
+    ui_entities.append(btn)
 
 
 def show_overworld_hud():
