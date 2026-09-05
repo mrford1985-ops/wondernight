@@ -32,9 +32,11 @@ A full 3D rebuild of the same game using the [Ursina](https://www.ursinaengine.o
 dragon/whale/bird/werewolf forms and princess companion - but rendered
 in a real 3D world with a perspective camera instead of 2D sprites.
 
-Since true 3D models of Mark, Cam, Oni, and every transformation don't
-exist, everyone is a blocky/low-poly placeholder shape distinguished by
-color, standing in for the original hand-drawn art.
+Characters, Dark Knights, the pirate ship, and the princess are voxel-style
+character art (in `assets3d/`) shown as billboards that always face the
+camera - since no actual 3D model files exist for them, this is the
+closest practical stand-in for "real 3D models." The whale
+transformation has no source art, so it's still a simple primitive shape.
 
 ### How to run it
 

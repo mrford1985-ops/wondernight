@@ -56,6 +56,46 @@ DARK_KNIGHT_COLOR = color.rgb32(35, 25, 45)
 PRINCESS_COLOR = (color.rgb32(250, 210, 230), color.rgb32(255, 255, 255))
 SHIP_COLOR = color.rgb32(90, 60, 30)
 
+# ---- voxel-style character art (billboarded sprites in the 3D world) ----
+import os as _os
+ASSET3D_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "assets3d")
+
+_texture3d_cache = {}
+
+def asset3d(name):
+    """Load a texture from assets3d/ by filename, bypassing Ursina's normal
+    asset-folder search (our textures live outside it)."""
+    if name not in _texture3d_cache:
+        tex = load_texture(name, path=ASSET3D_DIR)
+        if tex is None:
+            print_warning(f"3D asset missing: {name}")
+        _texture3d_cache[name] = tex
+    return _texture3d_cache[name]
+
+TEXTURE_BY_FORM = {
+    "human": {"mark": "mark.png", "cam": "cam.png", "oni": "oni.png"},
+    "dragon": {"mark": "gold_dragon.png", "cam": "red_dragon.png", "oni": "oni_dragon.png"},
+    "bird": {"mark": "gold_bird.png", "cam": "red_bird.png", "oni": "oni_bird.png"},
+    "werewolf": {"mark": "werewolf.png", "cam": "werewolf.png", "oni": "werewolf.png"},
+    # no source art exists for "whale" - it stays a primitive-shape model
+}
+FORM_BILLBOARD_HEIGHT = {"human": 1.5, "dragon": 2.0, "bird": 1.1, "werewolf": 2.1}
+DARK_KNIGHT_BILLBOARD_HEIGHT = 1.9
+SHIP_BILLBOARD_WIDTH = 2.6
+PRINCESS_BILLBOARD_HEIGHT = 1.3
+
+# width/height aspect ratio of each sprite, measured once ahead of time -
+# used so billboards don't look squashed/stretched
+ASPECT_BY_FILE = {
+    "mark.png": 345 / 615, "cam.png": 285 / 595, "oni.png": 959 / 1440,
+    "gold_dragon.png": 470 / 452, "red_dragon.png": 470 / 461, "oni_dragon.png": 470 / 461,
+    "gold_bird.png": 1246 / 1219, "red_bird.png": 1246 / 1219, "oni_bird.png": 1234 / 1217,
+    "werewolf.png": 1053 / 1161,
+    "dark_knight.png": 998 / 1338,
+    "ship.png": 1235 / 1251,
+    "princess.png": 1023 / 1535,
+}
+
 # =====================================================================
 # ---- Combat & scoring stats (ported 1:1 from the 2D game) ----
 # =====================================================================
@@ -238,121 +278,84 @@ def update_camera(target_pos):
 # ---- (blocky placeholder models - primitives only, no external art) ----
 # =====================================================================
 
+def make_billboard(parent, filename, height, y_offset=0.0):
+    """A camera-facing sprite quad, bottom-anchored so it 'stands' on the
+    ground, textured with the voxel-style character art."""
+    aspect = ASPECT_BY_FILE.get(filename, 1.0)
+    b = Entity(
+        parent=parent, model='quad', texture=asset3d(filename),
+        scale=(height * aspect, height, 1), origin=(0, -0.5),
+        position=(0, y_offset, 0), billboard=True, unlit=True,
+        double_sided=True, alpha=1,
+    )
+    return b
+
+
 def build_character_rig(character):
-    """A small humanoid built from primitives, with hidden extra parts
-    (wings/tail/fins/ears) that get shown per active_form."""
+    """A voxel-art billboard sprite for human/dragon/bird/werewolf forms,
+    plus a small set of primitive parts used only for whale form (no
+    source art exists for the whale transformation)."""
     primary, accent = CHARACTER_COLORS[character]
     root = Entity(position=(0, 0, 0))
-    body = Entity(parent=root, model='cube', color=primary, scale=(0.55, 0.75, 0.35), position=(0, 0.5, 0))
-    head = Entity(parent=root, model='cube', color=accent, scale=(0.38, 0.38, 0.38), position=(0, 1.05, 0))
-    left_wing = Entity(parent=root, model='cube', color=accent, scale=(0.9, 0.05, 0.5),
-                        position=(-0.55, 0.75, 0), rotation=(0, 0, 20), enabled=False)
-    right_wing = Entity(parent=root, model='cube', color=accent, scale=(0.9, 0.05, 0.5),
-                         position=(0.55, 0.75, 0), rotation=(0, 0, -20), enabled=False)
-    tail = Entity(parent=root, model='diamond', color=primary, scale=(0.25, 0.25, 0.9),
-                  position=(0, 0.4, -0.55), enabled=False)
-    fin_left = Entity(parent=root, model='diamond', color=accent, scale=(0.2, 0.4, 0.5),
-                       position=(-0.45, 0.4, 0), enabled=False)
-    fin_right = Entity(parent=root, model='diamond', color=accent, scale=(0.2, 0.4, 0.5),
-                        position=(0.45, 0.4, 0), enabled=False)
-    ear_left = Entity(parent=root, model='diamond', color=accent, scale=(0.14, 0.3, 0.14),
-                       position=(-0.15, 1.32, 0.05), enabled=False)
-    ear_right = Entity(parent=root, model='diamond', color=accent, scale=(0.14, 0.3, 0.14),
-                        position=(0.15, 1.32, 0.05), enabled=False)
+    sprite = make_billboard(root, TEXTURE_BY_FORM["human"][character], FORM_BILLBOARD_HEIGHT["human"])
+
+    tint = FORM_COLOR_TINT["whale"][character]
+    whale_body = Entity(parent=root, model='sphere', color=tint, scale=(1.0, 0.7, 1.3),
+                         position=(0, 0.5, 0), enabled=False)
+    whale_head = Entity(parent=root, model='sphere', color=tint, scale=(0.3, 0.3, 0.3),
+                         position=(0, 0.85, 0.65), enabled=False)
+    whale_fin_left = Entity(parent=root, model='diamond', color=accent, scale=(0.2, 0.4, 0.5),
+                             position=(-0.45, 0.4, 0), enabled=False)
+    whale_fin_right = Entity(parent=root, model='diamond', color=accent, scale=(0.2, 0.4, 0.5),
+                              position=(0.45, 0.4, 0), enabled=False)
+    whale_tail = Entity(parent=root, model='diamond', color=primary, scale=(0.25, 0.25, 0.9),
+                         position=(0, 0.4, -0.55), enabled=False)
     return {
-        "root": root, "body": body, "head": head,
-        "left_wing": left_wing, "right_wing": right_wing, "tail": tail,
-        "fin_left": fin_left, "fin_right": fin_right,
-        "ear_left": ear_left, "ear_right": ear_right,
+        "root": root, "sprite": sprite,
+        "whale_body": whale_body, "whale_head": whale_head,
+        "whale_fin_left": whale_fin_left, "whale_fin_right": whale_fin_right, "whale_tail": whale_tail,
     }
 
 
 def apply_form_visuals(rig, form, character):
-    """Reshape/retint a character rig's primitives for the given active_form."""
-    primary, accent = CHARACTER_COLORS[character]
-    for part in ("left_wing", "right_wing", "tail", "fin_left", "fin_right", "ear_left", "ear_right"):
-        rig[part].enabled = False
+    """Swap the rig between a voxel-art billboard (human/dragon/bird/werewolf)
+    and the primitive whale shape (no source art exists for that form)."""
+    whale_parts = ("whale_body", "whale_head", "whale_fin_left", "whale_fin_right", "whale_tail")
 
-    body, head = rig["body"], rig["head"]
-    body.model = 'cube'
-
-    if form == "human":
-        body.color = primary
-        head.color = accent
-        body.scale = (0.55, 0.75, 0.35)
-        head.scale = (0.38, 0.38, 0.38)
-        head.position = (0, 1.05, 0)
-
-    elif form == "dragon":
-        tint = FORM_COLOR_TINT["dragon"][character]
-        body.color = tint
-        head.color = tint
-        body.scale = (0.75, 0.95, 0.5)
-        head.scale = (0.45, 0.42, 0.5)
-        head.position = (0, 1.3, 0.1)
-        rig["left_wing"].enabled = True
-        rig["right_wing"].enabled = True
-        rig["tail"].enabled = True
-
-    elif form == "whale":
-        tint = FORM_COLOR_TINT["whale"][character]
-        body.model = 'sphere'
-        body.color = tint
-        head.color = tint
-        body.scale = (1.0, 0.7, 1.3)
-        head.scale = (0.3, 0.3, 0.3)
-        head.position = (0, 0.85, 0.65)
-        rig["fin_left"].enabled = True
-        rig["fin_right"].enabled = True
-        rig["tail"].enabled = True
-
-    elif form == "bird":
-        tint = FORM_COLOR_TINT["bird"][character]
-        body.model = 'sphere'
-        body.color = tint
-        head.color = tint
-        body.scale = (0.4, 0.4, 0.55)
-        head.scale = (0.25, 0.25, 0.3)
-        head.position = (0, 0.62, 0.3)
-        rig["left_wing"].enabled = True
-        rig["right_wing"].enabled = True
-        rig["left_wing"].position = (-0.5, 0.45, 0)
-        rig["right_wing"].position = (0.5, 0.45, 0)
-
-    elif form == "werewolf":
-        tint = FORM_COLOR_TINT["werewolf"][character]
-        body.color = tint
-        head.color = tint
-        body.scale = (0.85, 1.0, 0.55)
-        head.scale = (0.48, 0.42, 0.5)
-        head.position = (0, 1.35, 0.12)
-        rig["ear_left"].enabled = True
-        rig["ear_right"].enabled = True
+    if form == "whale":
+        rig["sprite"].enabled = False
+        for part in whale_parts:
+            rig[part].enabled = True
+    else:
+        for part in whale_parts:
+            rig[part].enabled = False
+        rig["sprite"].enabled = True
+        rig["sprite"].texture = asset3d(TEXTURE_BY_FORM[form][character])
+        height = FORM_BILLBOARD_HEIGHT[form]
+        aspect = ASPECT_BY_FILE.get(TEXTURE_BY_FORM[form][character], 1.0)
+        rig["sprite"].scale = (height * aspect, height, 1)
 
 
 def build_dark_knight_rig():
     root = Entity(position=(0, 0, 0))
-    body = Entity(parent=root, model='cube', color=DARK_KNIGHT_COLOR, scale=(0.6, 0.85, 0.4), position=(0, 0.55, 0))
-    head = Entity(parent=root, model='cube', color=color.rgb32(20, 15, 25), scale=(0.4, 0.4, 0.4), position=(0, 1.15, 0))
-    sword = Entity(parent=root, model='cube', color=color.rgb32(150, 150, 165), scale=(0.08, 0.9, 0.08),
-                   position=(0.5, 0.7, 0), rotation=(0, 0, 25))
-    return {"root": root, "body": body, "head": head, "sword": sword}
+    sprite = make_billboard(root, "dark_knight.png", DARK_KNIGHT_BILLBOARD_HEIGHT)
+    return {"root": root, "sprite": sprite}
 
 
 def build_ship_rig():
     root = Entity(position=(0, 0, 0), enabled=False)
-    hull = Entity(parent=root, model='cube', color=SHIP_COLOR, scale=(0.9, 0.3, 1.6), position=(0, 0.15, 0))
-    mast = Entity(parent=root, model='cube', color=color.rgb32(70, 45, 20), scale=(0.08, 1.0, 0.08), position=(0, 0.8, 0))
-    sail = Entity(parent=root, model='cube', color=color.rgb32(230, 225, 210), scale=(0.5, 0.55, 0.03), position=(0, 0.95, 0.1))
-    return {"root": root, "hull": hull, "mast": mast, "sail": sail}
+    aspect = ASPECT_BY_FILE.get("ship.png", 1.0)
+    height = SHIP_BILLBOARD_WIDTH / aspect
+    sprite = Entity(parent=root, model='quad', texture=asset3d("ship.png"),
+                     scale=(SHIP_BILLBOARD_WIDTH, height, 1), origin=(0, -0.5),
+                     billboard=True, unlit=True, double_sided=True)
+    return {"root": root, "sprite": sprite}
 
 
 def build_princess_rig():
-    primary, accent = PRINCESS_COLOR
     root = Entity(position=(0, 0, 0))
-    dress = Entity(parent=root, model='diamond', color=primary, scale=(0.5, 0.8, 0.5), position=(0, 0.45, 0))
-    head = Entity(parent=root, model='sphere', color=accent, scale=(0.3, 0.3, 0.3), position=(0, 0.95, 0))
-    return {"root": root, "dress": dress, "head": head}
+    sprite = make_billboard(root, "princess.png", PRINCESS_BILLBOARD_HEIGHT)
+    return {"root": root, "sprite": sprite}
 
 # =====================================================================
 # ---- Game state ----
