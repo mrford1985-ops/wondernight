@@ -74,6 +74,10 @@ When you run this:
                   reduction in a fight. B toggles independently of D
                   and W too, so you can switch straight into or out of
                   bird form from any other form.
+     R          - transform into a werewolf! A night hunter: normal
+                  health and normal move speed, but hits 50% harder in
+                  a fight and can track straight through trees like the
+                  bird can. R toggles independently of D, W, and B too.
      Esc        - quit any time
    Walking into a Dark Knight (or one wandering into you) starts a
    real battle - there's no running away, so land your attack! You can
@@ -210,13 +214,15 @@ BASE_MOVE_COOLDOWN_MS = 150         # minimum time between steps
 DRAGON_MOVE_COOLDOWN_MS = 1000      # dragons can only take one step per second
 BIRD_HP_MULTIPLIER = 0.75           # birds are fragile - 25% less health than human
 BIRD_MOVE_COOLDOWN_MS = 75          # birds are fast - twice the base movement speed
+WEREWOLF_DAMAGE_DEALT_MULTIPLIER = 1.5  # night hunters - werewolves hit 50% harder in combat
 
-# Per-form modifiers, keyed by active_form ("dragon"/"whale"/"bird"). A form
-# missing from a dict just falls back to the human/default value.
+# Per-form modifiers, keyed by active_form ("dragon"/"whale"/"bird"/"werewolf").
+# A form missing from a dict just falls back to the human/default value.
 FORM_HP_MULTIPLIER = {"dragon": DRAGON_HP_MULTIPLIER, "whale": DRAGON_HP_MULTIPLIER, "bird": BIRD_HP_MULTIPLIER}
 FORM_MOVE_COOLDOWN_MS = {"dragon": DRAGON_MOVE_COOLDOWN_MS, "whale": DRAGON_MOVE_COOLDOWN_MS, "bird": BIRD_MOVE_COOLDOWN_MS}
 FORM_DAMAGE_TAKEN_MULTIPLIER = {"dragon": DRAGON_DAMAGE_TAKEN_MULTIPLIER, "whale": DRAGON_DAMAGE_TAKEN_MULTIPLIER}
-FORM_IGNORES_TREES = {"bird"}
+FORM_DAMAGE_DEALT_MULTIPLIER = {"werewolf": WEREWOLF_DAMAGE_DEALT_MULTIPLIER}
+FORM_IGNORES_TREES = {"bird", "werewolf"}
 
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
@@ -229,6 +235,7 @@ DARK_KNIGHT_TARGET_H = 130
 DRAGON_TARGET_W = 170
 WHALE_TARGET_W = 170       # the whale form - same footprint as the dragon form
 BIRD_TARGET_W = 120        # the bird form - a bit smaller, it's fast and fragile
+WEREWOLF_TARGET_H = 150    # the werewolf form - a big, hulking night hunter
 SHIP_TARGET_W = 140        # the ship Dark Knights ride while the water is out
 TREE_TARGET_H = 100
 GRASS_TARGET_W = 28  # small ground texture tuft, scattered one per grass tile
@@ -551,7 +558,11 @@ def main():
         "cam": load_scaled("red_bird.png", target_w=BIRD_TARGET_W),
         "oni": load_scaled("oni_bird.png", target_w=BIRD_TARGET_W),
     }
-    images_by_form = {"dragon": dragon_images, "whale": whale_images, "bird": bird_images}
+    werewolf_image = load_scaled("werewolf.png", target_h=WEREWOLF_TARGET_H)
+    werewolf_images = {"mark": werewolf_image, "cam": werewolf_image, "oni": werewolf_image}
+    images_by_form = {
+        "dragon": dragon_images, "whale": whale_images, "bird": bird_images, "werewolf": werewolf_images,
+    }
     human_portraits = {
         "mark": load_scaled("mark.png", target_h=BATTLE_PORTRAIT_H),
         "cam": load_scaled("cam.png", target_h=BATTLE_PORTRAIT_H),
@@ -572,7 +583,11 @@ def main():
         "cam": load_scaled("red_bird.png", target_h=BATTLE_PORTRAIT_H),
         "oni": load_scaled("oni_bird.png", target_h=BATTLE_PORTRAIT_H),
     }
-    portraits_by_form = {"dragon": dragon_portraits, "whale": whale_portraits, "bird": bird_portraits}
+    werewolf_portrait = load_scaled("werewolf.png", target_h=BATTLE_PORTRAIT_H)
+    werewolf_portraits = {"mark": werewolf_portrait, "cam": werewolf_portrait, "oni": werewolf_portrait}
+    portraits_by_form = {
+        "dragon": dragon_portraits, "whale": whale_portraits, "bird": bird_portraits, "werewolf": werewolf_portraits,
+    }
     dark_knight_image = load_scaled("dark_knight.png", target_h=DARK_KNIGHT_TARGET_H)
     princess_image = load_scaled("princess.png", target_h=PRINCESS_TARGET_H)
     tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
@@ -786,6 +801,12 @@ def main():
                         new_max = effective_max_hp(active, active_form)
                         hp[active] = max(1, min(new_max, round(hp[active] * new_max / old_max)))
 
+                    elif event.key == pygame.K_r:
+                        old_max = effective_max_hp(active, active_form)
+                        active_form = "human" if active_form == "werewolf" else "werewolf"
+                        new_max = effective_max_hp(active, active_form)
+                        hp[active] = max(1, min(new_max, round(hp[active] * new_max / old_max)))
+
                     elif event.key == pygame.K_i:
                         attack_until[active] = pygame.time.get_ticks() + ATTACK_DURATION_MS
 
@@ -868,6 +889,8 @@ def main():
                         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                             fighter_name = DISPLAY_NAME[battle_fighter]
                             player_dmg = random.randint(*PLAYER_ATK_RANGE)
+                            dealt_multiplier = FORM_DAMAGE_DEALT_MULTIPLIER.get(active_form, 1.0)
+                            player_dmg = max(1, round(player_dmg * dealt_multiplier))
                             battle_enemy_hp -= player_dmg
                             battle_log = [f"{fighter_name} hits the Dark Knight for {player_dmg}!"]
 
@@ -1300,7 +1323,7 @@ def draw_hud(screen, font, active, active_form, respawn_seconds, wins, scores, a
         solo_note = f" ({'/'.join(eliminated)} out!)" if eliminated else ""
         stats = "  ".join(f"{DISPLAY_NAME[c]} {wins[c]}W/{scores[c]}pt" for c in roster)
         text = font.render(
-            f"{who}'s turn{dragon_note}{solo_note}  {stats} | Arrows I:atk D/W/B:form Esc:quit",
+            f"{who}'s turn{dragon_note}{solo_note}  {stats} | Arrows I:atk D/W/B/R:form Esc:quit",
             True, WHITE,
         )
     text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT - HUD_HEIGHT // 2))
