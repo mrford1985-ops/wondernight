@@ -68,6 +68,12 @@ When you run this:
                   directly. Go full whale and the forest floor turns
                   to water under you until you change back - and the
                   Dark Knights swap their footing for pirate ships too.
+     B          - transform into a bird! Fast but fragile: birds move
+                  twice as fast as normal and can fly right over trees,
+                  but carry less health than usual and get no damage
+                  reduction in a fight. B toggles independently of D
+                  and W too, so you can switch straight into or out of
+                  bird form from any other form.
      Esc        - quit any time
    Walking into a Dark Knight (or one wandering into you) starts a
    real battle - there's no running away, so land your attack! You can
@@ -202,6 +208,15 @@ DRAGON_HP_MULTIPLIER = 1.5          # dragons have 50% more health
 DRAGON_DAMAGE_TAKEN_MULTIPLIER = 0.5  # dragons take half damage in combat
 BASE_MOVE_COOLDOWN_MS = 150         # minimum time between steps
 DRAGON_MOVE_COOLDOWN_MS = 1000      # dragons can only take one step per second
+BIRD_HP_MULTIPLIER = 0.75           # birds are fragile - 25% less health than human
+BIRD_MOVE_COOLDOWN_MS = 75          # birds are fast - twice the base movement speed
+
+# Per-form modifiers, keyed by active_form ("dragon"/"whale"/"bird"). A form
+# missing from a dict just falls back to the human/default value.
+FORM_HP_MULTIPLIER = {"dragon": DRAGON_HP_MULTIPLIER, "whale": DRAGON_HP_MULTIPLIER, "bird": BIRD_HP_MULTIPLIER}
+FORM_MOVE_COOLDOWN_MS = {"dragon": DRAGON_MOVE_COOLDOWN_MS, "whale": DRAGON_MOVE_COOLDOWN_MS, "bird": BIRD_MOVE_COOLDOWN_MS}
+FORM_DAMAGE_TAKEN_MULTIPLIER = {"dragon": DRAGON_DAMAGE_TAKEN_MULTIPLIER, "whale": DRAGON_DAMAGE_TAKEN_MULTIPLIER}
+FORM_IGNORES_TREES = {"bird"}
 
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
@@ -213,6 +228,7 @@ ONI_TARGET_H = 130
 DARK_KNIGHT_TARGET_H = 130
 DRAGON_TARGET_W = 170
 WHALE_TARGET_W = 170       # the whale form - same footprint as the dragon form
+BIRD_TARGET_W = 120        # the bird form - a bit smaller, it's fast and fragile
 SHIP_TARGET_W = 140        # the ship Dark Knights ride while the water is out
 TREE_TARGET_H = 100
 GRASS_TARGET_W = 28  # small ground texture tuft, scattered one per grass tile
@@ -239,12 +255,15 @@ def load_scaled(filename, target_h=None, target_w=None):
     return pygame.transform.smoothscale(image, new_size)
 
 
-def is_walkable(col, row):
-    """A tile is walkable if it's inside the map and isn't a tree."""
+def is_walkable(col, row, ignore_trees=False):
+    """A tile is walkable if it's inside the map and isn't a tree.
+    Flying forms (birds) can ignore trees and pass right over them."""
     if row < 0 or row >= MAP_ROW_COUNT:
         return False
     if col < 0 or col >= MAP_COLS:
         return False
+    if ignore_trees:
+        return True
     return MAP_ROWS[row][col] == "."
 
 
@@ -261,9 +280,11 @@ def direction_from_delta(d_col, d_row):
 
 
 def effective_max_hp(character, form):
-    """Dragons and whales both carry 50% more health than the human max."""
+    """Dragons and whales both carry 50% more health than the human max;
+    birds trade some health away for speed."""
     base = BASE_MAX_HP[character]
-    return round(base * DRAGON_HP_MULTIPLIER) if form != "human" else base
+    multiplier = FORM_HP_MULTIPLIER.get(form, 1.0)
+    return max(1, round(base * multiplier))
 
 
 def hp_percent(current, maximum):
@@ -525,7 +546,12 @@ def main():
         "cam": load_scaled("red_whale.png", target_w=WHALE_TARGET_W),
         "oni": load_scaled("oni_whale.png", target_w=WHALE_TARGET_W),
     }
-    images_by_form = {"dragon": dragon_images, "whale": whale_images}
+    bird_images = {
+        "mark": load_scaled("gold_bird.png", target_w=BIRD_TARGET_W),
+        "cam": load_scaled("red_bird.png", target_w=BIRD_TARGET_W),
+        "oni": load_scaled("oni_bird.png", target_w=BIRD_TARGET_W),
+    }
+    images_by_form = {"dragon": dragon_images, "whale": whale_images, "bird": bird_images}
     human_portraits = {
         "mark": load_scaled("mark.png", target_h=BATTLE_PORTRAIT_H),
         "cam": load_scaled("cam.png", target_h=BATTLE_PORTRAIT_H),
@@ -541,7 +567,12 @@ def main():
         "cam": load_scaled("red_whale.png", target_h=BATTLE_PORTRAIT_H),
         "oni": load_scaled("oni_whale.png", target_h=BATTLE_PORTRAIT_H),
     }
-    portraits_by_form = {"dragon": dragon_portraits, "whale": whale_portraits}
+    bird_portraits = {
+        "mark": load_scaled("gold_bird.png", target_h=BATTLE_PORTRAIT_H),
+        "cam": load_scaled("red_bird.png", target_h=BATTLE_PORTRAIT_H),
+        "oni": load_scaled("oni_bird.png", target_h=BATTLE_PORTRAIT_H),
+    }
+    portraits_by_form = {"dragon": dragon_portraits, "whale": whale_portraits, "bird": bird_portraits}
     dark_knight_image = load_scaled("dark_knight.png", target_h=DARK_KNIGHT_TARGET_H)
     princess_image = load_scaled("princess.png", target_h=PRINCESS_TARGET_H)
     tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
@@ -749,6 +780,12 @@ def main():
                         new_max = effective_max_hp(active, active_form)
                         hp[active] = max(1, min(new_max, round(hp[active] * new_max / old_max)))
 
+                    elif event.key == pygame.K_b:
+                        old_max = effective_max_hp(active, active_form)
+                        active_form = "human" if active_form == "bird" else "bird"
+                        new_max = effective_max_hp(active, active_form)
+                        hp[active] = max(1, min(new_max, round(hp[active] * new_max / old_max)))
+
                     elif event.key == pygame.K_i:
                         attack_until[active] = pygame.time.get_ticks() + ATTACK_DURATION_MS
 
@@ -785,7 +822,7 @@ def main():
 
                         if d_col or d_row:
                             move_check_time = pygame.time.get_ticks()
-                            move_cooldown = DRAGON_MOVE_COOLDOWN_MS if active_form != "human" else BASE_MOVE_COOLDOWN_MS
+                            move_cooldown = FORM_MOVE_COOLDOWN_MS.get(active_form, BASE_MOVE_COOLDOWN_MS)
                             if move_check_time - last_move_time >= move_cooldown:
                                 last_move_time = move_check_time
 
@@ -809,7 +846,7 @@ def main():
                                     battle_selected = 0
                                     battle_log = []
 
-                                elif is_walkable(new_col, new_row):
+                                elif is_walkable(new_col, new_row, ignore_trees=active_form in FORM_IGNORES_TREES):
                                     pos[active] = (new_col, new_row)
 
                                     princess_trail.append((new_col, new_row))
@@ -844,9 +881,11 @@ def main():
                                 battle_log.append("The princess steps in and blocks the blow!")
                             else:
                                 enemy_dmg = random.randint(*ENEMY_ATK_RANGE)
-                                if active_form != "human":
-                                    # dragons and whales both take half damage in combat
-                                    enemy_dmg = max(1, round(enemy_dmg * DRAGON_DAMAGE_TAKEN_MULTIPLIER))
+                                damage_multiplier = FORM_DAMAGE_TAKEN_MULTIPLIER.get(active_form)
+                                if damage_multiplier is not None:
+                                    # dragons and whales both take half damage in combat;
+                                    # birds get no damage reduction - fast but fragile
+                                    enemy_dmg = max(1, round(enemy_dmg * damage_multiplier))
                                 hp[battle_fighter] = max(0, hp[battle_fighter] - enemy_dmg)
                                 fighter_hp_after = hp[battle_fighter]
                                 battle_log.append(
@@ -1261,7 +1300,7 @@ def draw_hud(screen, font, active, active_form, respawn_seconds, wins, scores, a
         solo_note = f" ({'/'.join(eliminated)} out!)" if eliminated else ""
         stats = "  ".join(f"{DISPLAY_NAME[c]} {wins[c]}W/{scores[c]}pt" for c in roster)
         text = font.render(
-            f"{who}'s turn{dragon_note}{solo_note}  {stats} | Arrows I:atk D/W:form Esc:quit",
+            f"{who}'s turn{dragon_note}{solo_note}  {stats} | Arrows I:atk D/W/B:form Esc:quit",
             True, WHITE,
         )
     text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT - HUD_HEIGHT // 2))
