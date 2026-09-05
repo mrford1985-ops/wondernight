@@ -65,7 +65,8 @@ When you run this:
                   movement key presses while on cooldown are ignored.
                   D and W each toggle their own form independently, so
                   pressing one while you're the other switches forms
-                  directly.
+                  directly. Go full whale and the forest floor turns
+                  to water under you until you change back.
      Esc        - quit any time
    Walking into a Dark Knight (or one wandering into you) starts a
    real battle - there's no running away, so land your attack! You can
@@ -153,6 +154,9 @@ MAP_PIXEL_HEIGHT = MAP_ROW_COUNT * TILE_SIZE
 
 GRASS_COLOR = (34, 120, 34)
 GRASS_COLOR_ALT = (30, 108, 30)
+WATER_COLOR = (28, 90, 170)          # ground tiles turn to water while a racer is a whale
+WATER_COLOR_ALT = (24, 80, 155)
+WATER_RIPPLE_COLOR = (140, 200, 240)
 START_COLOR = (70, 190, 90)
 FINISH_COLOR = (210, 180, 60)
 
@@ -437,7 +441,16 @@ def draw_marker_tile(screen, x, y, color, letter, flag_color, font):
     screen.blit(letter_surface, letter_surface.get_rect(center=(pole_x + 14, y + 20)))
 
 
-def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y, start, finish):
+def draw_water_ripple(screen, x, y):
+    """A couple of small procedural ripple arcs standing in for a grass tuft
+    on a water tile - no extra art asset needed."""
+    ripple_rect_1 = pygame.Rect(x + TILE_SIZE // 4, y + TILE_SIZE // 2, TILE_SIZE // 2, TILE_SIZE // 4)
+    pygame.draw.arc(screen, WATER_RIPPLE_COLOR, ripple_rect_1, 3.4, 6.0, 2)
+    ripple_rect_2 = pygame.Rect(x + TILE_SIZE // 6, y + TILE_SIZE * 2 // 3, TILE_SIZE * 2 // 3, TILE_SIZE // 4)
+    pygame.draw.arc(screen, WATER_RIPPLE_COLOR, ripple_rect_2, 3.4, 6.0, 2)
+
+
+def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y, start, finish, is_water=False):
     col_start = max(0, cam_x // TILE_SIZE)
     col_end = min(MAP_COLS, (cam_x + VIEWPORT_WIDTH) // TILE_SIZE + 2)
     row_start = max(0, cam_y // TILE_SIZE)
@@ -456,12 +469,17 @@ def draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y, star
                 draw_marker_tile(screen, x, y, FINISH_COLOR, "F", DANGER_RED, marker_font)
                 continue
 
-            grass = GRASS_COLOR if (row + col) % 2 == 0 else GRASS_COLOR_ALT
-            pygame.draw.rect(screen, grass, (x, y, TILE_SIZE, TILE_SIZE))
+            if is_water:
+                ground = WATER_COLOR if (row + col) % 2 == 0 else WATER_COLOR_ALT
+            else:
+                ground = GRASS_COLOR if (row + col) % 2 == 0 else GRASS_COLOR_ALT
+            pygame.draw.rect(screen, ground, (x, y, TILE_SIZE, TILE_SIZE))
 
             if tile == "T":
                 tw, th = tree_image.get_size()
                 screen.blit(tree_image, (x + (TILE_SIZE - tw) // 2, y + TILE_SIZE - th))
+            elif is_water:
+                draw_water_ripple(screen, x, y)
             else:
                 gw, gh = grass_image.get_size()
                 screen.blit(grass_image, (x + (TILE_SIZE - gw) // 2, y + TILE_SIZE - gh))
@@ -1019,7 +1037,10 @@ def main():
             active_facing = facing[active]
             cam_x, cam_y = compute_camera(active_col, active_row)
 
-            draw_forest(screen, tree_image, grass_image, marker_font, cam_x, cam_y, current_start, current_finish)
+            draw_forest(
+                screen, tree_image, grass_image, marker_font, cam_x, cam_y,
+                current_start, current_finish, is_water=active_form == "whale",
+            )
 
             for enemy in enemies:
                 draw_image_character(screen, dark_knight_image, enemy["col"], enemy["row"], cam_x, cam_y)
