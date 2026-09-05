@@ -268,10 +268,10 @@ sun.color = color.rgba32(255, 250, 235, 255)
 ambient = AmbientLight(color=color.rgba32(120, 120, 140, 255))
 
 # ---- Camera rig: elevated chase camera that follows the active racer ----
-CHASE_DISTANCE = 6.5   # how far behind the character the camera sits
-CHASE_HEIGHT = 5.5     # how high above the ground the camera sits
-LOOK_HEIGHT = 1.2      # look at a point this high above the character's feet
-camera.fov = 70
+CHASE_DISTANCE = 2.8   # how far behind the character the camera sits - close, over-the-shoulder
+CHASE_HEIGHT = 2.0     # how high above the ground the camera sits - roughly head height
+LOOK_HEIGHT = 1.0      # look at a point this high above the character's feet
+camera.fov = 65
 
 FACING_TO_WORLD_DIR = {
     "up": Vec3(0, 0, -1),
