@@ -66,7 +66,8 @@ When you run this:
                   D and W each toggle their own form independently, so
                   pressing one while you're the other switches forms
                   directly. Go full whale and the forest floor turns
-                  to water under you until you change back.
+                  to water under you until you change back - and the
+                  Dark Knights swap their footing for pirate ships too.
      Esc        - quit any time
    Walking into a Dark Knight (or one wandering into you) starts a
    real battle - there's no running away, so land your attack! You can
@@ -212,6 +213,7 @@ ONI_TARGET_H = 130
 DARK_KNIGHT_TARGET_H = 130
 DRAGON_TARGET_W = 170
 WHALE_TARGET_W = 170       # the whale form - same footprint as the dragon form
+SHIP_TARGET_W = 140        # the ship Dark Knights ride while the water is out
 TREE_TARGET_H = 100
 GRASS_TARGET_W = 28  # small ground texture tuft, scattered one per grass tile
 WATER_TARGET_W = 30  # small water-splash tuft, scattered one per water tile
@@ -399,6 +401,22 @@ def draw_image_character(screen, surface, col, row, cam_x, cam_y):
     screen.blit(surface, (x, y))
 
 
+def draw_enemy_on_ship(screen, dark_knight_image, ship_image, col, row, cam_x, cam_y):
+    """While the water is out, Dark Knights patrol it by ship instead of
+    standing right on the waves."""
+    sw, sh = ship_image.get_size()
+    tile_x = col * TILE_SIZE - cam_x
+    tile_y = row * TILE_SIZE - cam_y
+    ship_x = tile_x + (TILE_SIZE - sw) // 2
+    ship_y = tile_y + TILE_SIZE - sh
+    screen.blit(ship_image, (ship_x, ship_y))
+
+    kw, kh = dark_knight_image.get_size()
+    knight_x = tile_x + (TILE_SIZE - kw) // 2
+    knight_y = ship_y + round(sh * 0.28)  # stand the knight on deck, not at the waterline
+    screen.blit(dark_knight_image, (knight_x, knight_y))
+
+
 def draw_attack_effect_image(screen, images_by_facing, col, row, facing, cam_x, cam_y):
     """Draw a real-art attack effect centered in the tile the character is facing."""
     d_col, d_row = FACING_OFFSET.get(facing, (0, 1))
@@ -529,6 +547,7 @@ def main():
     tree_image = load_scaled("tree.png", target_h=TREE_TARGET_H)
     grass_image = load_scaled("grass.png", target_w=GRASS_TARGET_W)
     water_image = load_scaled("water.png", target_w=WATER_TARGET_W)
+    dark_knight_ship_image = load_scaled("dark_knight_ship.png", target_w=SHIP_TARGET_W)
     gold_fist_up = load_scaled("gold_fist.png", target_h=GOLD_FIST_TARGET_H)
     fire_right = load_scaled("fire.png", target_w=FIRE_TARGET_W)
     oni_fireball_right = load_scaled("oni_fireball.png", target_w=ONI_FIREBALL_TARGET_W)
@@ -1036,7 +1055,13 @@ def main():
             )
 
             for enemy in enemies:
-                draw_image_character(screen, dark_knight_image, enemy["col"], enemy["row"], cam_x, cam_y)
+                if active_form == "whale":
+                    draw_enemy_on_ship(
+                        screen, dark_knight_image, dark_knight_ship_image,
+                        enemy["col"], enemy["row"], cam_x, cam_y,
+                    )
+                else:
+                    draw_image_character(screen, dark_knight_image, enemy["col"], enemy["row"], cam_x, cam_y)
 
             princess_idx = max(0, len(princess_trail) - 1 - princess_trail_index)
             princess_col, princess_row = princess_trail[princess_idx]
